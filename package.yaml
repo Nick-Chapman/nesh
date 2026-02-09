@@ -1,0 +1,35 @@
+name:                emu-framework
+version:             0.1.0.0
+description:         Emulator framework in Haskell, targeting NES
+license:             BSD3
+author:              Nick Chapman
+maintainer:          nic@amadido.co.uk
+github:              Nick-Chapman/emu-framewwork.git
+
+dependencies:
+- base >= 4.7 && < 5
+- clock
+- containers
+
+default-extensions:
+- DuplicateRecordFields
+- GADTs
+- GeneralizedNewtypeDeriving
+- ImportQualifiedPost
+- LambdaCase
+- NamedFieldPuns
+- NumericUnderscores
+- ScopedTypeVariables
+
+ghc-options:
+- -Werror
+- -Wall
+- -Wno-name-shadowing
+
+library:
+  source-dirs: src
+
+executables:
+  main.exe:
+    main:                app/main.hs
+    dependencies:        emu-framework

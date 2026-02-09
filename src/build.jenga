@@ -1,0 +1,22 @@
+
+executable-name:
+  echo emu.exe > $out
+
+include ../../jenga/rulelib/haskell.jenga
+
+main-entry:
+  echo Top > $out
+
+ghc-version:
+  echo 9.10.3 > $out
+
+ghc-options:
+  echo -Werror >> $out
+  echo -Wall >> $out
+  echo -Wno-name-shadowing >> $out
+  echo -O2 >> $out
+
+default-extensions:
+  echo LambdaCase >> $out
+  echo DuplicateRecordFields >> $out
+  echo GADTs >> $out
