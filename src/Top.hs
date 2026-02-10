@@ -9,7 +9,6 @@ import PRG qualified (ROM)
 
 main :: IO ()
 main = do
-  print "*emu-framework*"
   nesfile <- loadNesFile "nestest.nes"
   let prg = prgOfNesFile nesfile
   runEffect 22 (system prg)

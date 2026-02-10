@@ -3,13 +3,13 @@ module Framework
   , Ref(..), read, write
   ) where
 
---import Control.Monad (ap,liftM)
+import Control.Monad (ap,liftM)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Data.List (insertBy)
 import Data.Ord (comparing)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStrLn)
-import Text.Printf (printf)
+--import Text.Printf (printf)
 --import Types (U8)
 
 ----------------------------------------------------------------------
@@ -26,8 +26,8 @@ write Ref{onWrite} = onWrite
 ----------------------------------------------------------------------
 -- effect
 
-instance Functor Eff where fmap = undefined --liftM -- TODO: when are these needed?
-instance Applicative Eff where pure = Ret; (<*>) = undefined --ap
+instance Functor Eff where fmap = liftM
+instance Applicative Eff where pure = Ret; (<*>) = ap
 instance Monad Eff where (>>=) = Bind
 
 data Eff a where
@@ -39,6 +39,7 @@ data Eff a where
   --DefineMemory :: Int -> Eff (Int -> Ref U8)
   Parallel :: Eff () -> Eff () -> Eff ()
   Advance :: Int -> Eff ()
+  Cycles :: Eff Int
 
 runEffect :: Int -> Eff () -> IO ()
 runEffect maxCycles eff0 = loop s0 eff0 k0
@@ -46,16 +47,17 @@ runEffect maxCycles eff0 = loop s0 eff0 k0
     s0 = State { cycles = 0, jobs = [] }
     k0 () _ = error "effects should never end"
 
-    logOut :: State -> String -> IO ()
-    logOut State{cycles} message = do
-      putOut $ printf "[%d] %s" cycles message
-
     loop :: State -> Eff a -> (a -> State -> IO ()) -> IO ()
     loop s@State{cycles=now} eff k = case eff of
       Ret a -> k a s
       Bind m f -> loop s m $ \a s -> loop s (f a) k
+
+      Cycles -> do
+        let State{cycles} = s
+        k cycles s
+
       Log message -> do
-        logOut s message
+        putOut message
         k () s
 
       IO io -> do
@@ -91,15 +93,11 @@ runEffect maxCycles eff0 = loop s0 eff0 k0
         firstJob:restJobs -> do
           let Job {resumeTime,kunit} = firstJob
           let s3 = s1 { cycles = resumeTime, jobs = restJobs }
-          if timeToStop s3 then stop s3 else do
+          if timeToStop s3 then pure () else do
             kunit s3
 
     timeToStop :: State -> Bool
     timeToStop State{cycles} = cycles >= maxCycles
-
-    stop state = do
-      logOut state "Simulation ends"
-      pure ()
 
 putOut :: String -> IO ()
 putOut s = do
