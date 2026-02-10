@@ -10,7 +10,7 @@ import Data.Ord (comparing)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStrLn)
 import Text.Printf (printf)
-import Types (U8)
+--import Types (U8)
 
 ----------------------------------------------------------------------
 -- Ref
@@ -36,7 +36,7 @@ data Eff a where
   Log :: String -> Eff ()
   IO :: IO a -> Eff a
   DefineRegister :: a -> Eff (Ref a)
-  DefineMemory :: Int -> Eff (Int -> Ref U8)
+  --DefineMemory :: Int -> Eff (Int -> Ref U8)
   Parallel :: Eff () -> Eff () -> Eff ()
   Advance :: Int -> Eff ()
 
@@ -68,13 +68,13 @@ runEffect maxCycles eff0 = loop s0 eff0 k0
               , onWrite = \v -> IO (writeIORef r v)
               } s
 
-      DefineMemory size -> do
+      {-DefineMemory size -> do
         let
           f addr = do
             let onRead = error (show ("onRead",size,addr))
             let onWrite v = error (show ("onWrite",size,addr,v))
             Ref {onRead,onWrite}
-        k f s
+        k f s-}
 
       Parallel m1 m2 -> do
         let j2 = Job { resumeTime = now, kunit = \s -> loop s m2 k0 }

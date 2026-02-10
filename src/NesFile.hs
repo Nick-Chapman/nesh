@@ -1,0 +1,49 @@
+module NesFile
+  ( NesFile(..), loadNesFile
+  ) where
+
+--import Data.Bits (testBit)
+--import PPU.PMem(NametableMirroring(..))
+--import qualified CHR as CHR (ROM,init)
+import Control.Monad (when)
+import Data.ByteString.Internal (w2c) --,c2w)
+import Types (U8)
+import qualified Data.ByteString as BS (readFile,unpack)
+import qualified PRG as PRG (ROM,init)
+
+headerSize :: Int
+headerSize = 16
+
+prgSize :: Int
+prgSize = 0x4000 --16k
+
+patSize :: Int
+patSize = 0x1000 --2k (One PAT of 256 tiles)
+
+chrSize :: Int
+chrSize = 2 * patSize --4k
+
+data NesFile = NesFile
+  { header :: [U8]
+  , prgs :: [PRG.ROM]
+--  , chrs :: [CHR.ROM]
+--  , ntm :: NametableMirroring
+  }
+
+instance Show NesFile where
+  show NesFile{header} = "NesFile: " <> (unwords $ map show header)
+
+loadNesFile :: String -> IO NesFile
+loadNesFile path = do
+  byteString <- BS.readFile path
+  let bs = BS.unpack byteString
+  when (length bs < headerSize) $ error "header failure, too short"
+  when (map w2c (take 3 bs) /= "NES") $ error "header failure, missing NES tag"
+  let header = take headerSize bs
+  let x = fromIntegral (bs !! 4)
+  let y = fromIntegral (bs !! 5)
+  --let ntm = if byteToUnsigned (bs !! 6) `testBit` 0 then NTM_Horizontal else NTM_Vertical
+  when (length bs /= headerSize + (x * prgSize) + (y * chrSize)) $ error "bad file size"
+  let prgs = map (\i -> PRG.init $ take prgSize $ drop (headerSize + i * prgSize) bs) [0..x-1]
+  --let chrs = map (\i -> CHR.init $ take chrSize $ drop (headerSize + x * prgSize + i * 2 * patSize) bs) [0..y-1]
+  return $ NesFile { header,  prgs } --,  chrs, ntm }

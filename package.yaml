@@ -7,7 +7,9 @@ maintainer:          nic@amadido.co.uk
 github:              Nick-Chapman/emu-framewwork.git
 
 dependencies:
+- array
 - base >= 4.7 && < 5
+- bytestring
 - clock
 - containers
 
@@ -17,6 +19,7 @@ default-extensions:
 - GeneralizedNewtypeDeriving
 - ImportQualifiedPost
 - LambdaCase
+- MultiWayIf
 - NamedFieldPuns
 - NumericUnderscores
 - ScopedTypeVariables

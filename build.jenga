@@ -1,2 +1,3 @@
 
-*top : src/emu.exe : ./$in
+*top : src/emu.exe nestest.nes
+  ./$in
