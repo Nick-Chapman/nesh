@@ -1,5 +1,6 @@
 module CPU (cpu) where
 
+import Control.Monad (when)
 import Data.Array (Array,(!),listArray)
 import Data.Bits (testBit)
 import Data.List (intercalate)
@@ -7,9 +8,9 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 import Framework (Eff(..),Ref(..),write,read)
 import PRG qualified (ROM,read)
-import Prelude hiding (read)
+import Prelude hiding (read,and)
 import Text.Printf (printf)
-import Types (U8,Addr,HL(..),makeAddr,splitAddr,Flag(..),updateFlag)
+import Types (U8,Addr,HL(..),makeAddr,splitAddr,Flag(..),testFlag,updateFlag)
 
 cpu :: PRG.ROM -> Eff ()
 cpu prg = do
@@ -88,11 +89,26 @@ data Mode
 
 numBytesOfMode :: Mode -> Int
 numBytesOfMode = \case
-  Implied -> 0
+  --Implied -> 0
+  --Immediate -> 1
+  --Absolute -> 2
+  --ZeroPage -> 1
+
   Immediate -> 1
-  Absolute -> 2
   ZeroPage -> 1
-  m -> error (show m)
+  Absolute -> 2
+  Implied -> 0
+  Relative -> 1
+  AbsoluteX -> undefined
+  AbsoluteY -> undefined
+  ZeroPageX -> undefined
+  ZeroPageY -> undefined
+  IndexedIndirect -> undefined
+  IndirectIndexed -> undefined
+  Accumulator -> undefined
+  Indirect -> undefined
+
+  --m -> error (show m)
 
 seeModeAsValue :: CpuState -> Addr -> Mode -> Eff String
 seeModeAsValue s@CpuState{bus} pc mode = case mode of
@@ -100,16 +116,15 @@ seeModeAsValue s@CpuState{bus} pc mode = case mode of
   Immediate -> do
     byte <- read (bus (pc+1))
     pure (printf "#$%02X" byte)
-  Absolute -> seeRead
-  ZeroPage -> seeRead
-  m -> error (show m)
-  where
-    seeRead = seeModeAsAddress s pc mode
+  mode -> seeModeAsAddress s pc mode
+  --ZeroPage -> seeRead
+  --m -> error (show m)
+  --where gseeRead =
 
 seeModeAsAddress :: CpuState -> Addr -> Mode -> Eff String
 seeModeAsAddress CpuState{bus} pc = \case
   Implied -> error "seeModeAsAddress/Implied"
-  Immediate -> error "seeModeAsAddress/Implied"
+  Immediate -> error "seeModeAsAddress/Immediate"
   Absolute -> do
     lo <- read (bus (pc+1))
     hi <- read (bus (pc+2))
@@ -118,23 +133,27 @@ seeModeAsAddress CpuState{bus} pc = \case
   ZeroPage -> do
     lo <- read (bus (pc+1))
     pure (printf "$%02X" lo)
-  m -> error (show m)
+  Relative -> do
+    off <- read (bus (pc+1))
+    let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
+    let addr :: Addr = 2 + pc + fromIntegral dist
+    pure (printf "$%04X" addr)
+  m ->
+    error (show m)
 
 
 getValue :: CpuState -> Mode -> Eff U8
-getValue s@CpuState{bus} mode = case mode of
+getValue s@CpuState{bus} = \case
   Implied -> error "getValue/Implied"
   Immediate -> fetchIP s
-  Absolute -> readFromAddress
-  ZeroPage -> readFromAddress
-  m -> error (show m)
-  where
-    readFromAddress = do
-      a <- getAddr s mode
-      read (bus a)
+  mode -> readFromAddress
+    where
+      readFromAddress = do
+        a <- getAddr s mode
+        read (bus a)
 
 getAddr :: CpuState -> Mode -> Eff Addr
-getAddr s = \case
+getAddr s@CpuState{ip} mode = case mode of
   Implied -> error "getAddr/Implied"
   Immediate -> error "getAddr/Immediate"
   Absolute -> do
@@ -145,13 +164,57 @@ getAddr s = \case
     lo <- fetchIP s
     let hi = 0
     pure $ makeAddr HL { hi, lo }
-  m -> error (show m)
+
+  Relative -> do
+    pc <- read ip
+    --off <- read (bus (pc+1))
+    off <- fetchIP s
+    let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
+    let addr :: Addr = 2 + pc + fromIntegral dist
+    pure addr
+    --pc <- read ip
+    --increment16 ip
+    --modeToAddr s pc mode
+
+  AbsoluteX -> undefined
+  AbsoluteY -> undefined
+  ZeroPageX -> undefined
+  ZeroPageY -> undefined
+  IndexedIndirect -> undefined
+  IndirectIndexed -> undefined
+  Accumulator -> undefined
+  Indirect -> undefined
+
 
 fetchIP :: CpuState -> Eff U8
 fetchIP CpuState{ip,bus} = do
   a <- read ip
   write ip (a+1)
   read (bus a)
+
+
+_modeToAddr :: CpuState -> Addr -> Mode -> Eff Addr
+_modeToAddr CpuState{bus} pc = \case
+  Implied -> error "modeToAddr/Implied"
+  Immediate -> error "modeToAddr/Immediate"
+  Absolute -> do
+    lo <- read (bus (pc+1))
+    hi <- read (bus (pc+2))
+    pure $ makeAddr HL { hi, lo }
+  ZeroPage -> do
+    lo <- read (bus (pc+1))
+    let hi = 0
+    pure $ makeAddr HL { hi, lo }
+  Relative -> do
+    off <- read (bus (pc+1))
+    let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
+    let addr :: Addr = 2 + pc + fromIntegral dist
+    pure addr
+  m ->
+    error (show m)
+
+
+
 
 ----------------------------------------------------------------------
 -- CpuBus
@@ -417,12 +480,12 @@ table = do
     , ( q, STY, ZeroPage, 0x84)
     , ( q, STY, ZeroPageX, 0x94)
 
-    , ( q, TAX, Implied, 0xaa)
-    , ( q, TAY, Implied, 0xa8)
-    , ( q, TSX, Implied, 0xba)
-    , ( q, TXA, Implied, 0x8a)
-    , ( q, TXS, Implied, 0x9a)
-    , ( q, TYA, Implied, 0x98)
+    , ( 2, TAX, Implied, 0xaa)
+    , ( 2, TAY, Implied, 0xa8)
+    , ( 2, TSX, Implied, 0xba)
+    , ( 2, TXA, Implied, 0x8a)
+    , ( 2, TXS, Implied, 0x9a)
+    , ( 2, TYA, Implied, 0x98)
 
     ]
 
@@ -436,50 +499,179 @@ data Instruction
 
 instructionOfOp :: Op -> Instruction
 instructionOfOp = \case
+  ADC -> adc
+  AND -> and
+  ASL -> asl
+  BCC -> bcc
+  BCS -> bcs
+  BEQ -> beq
+  BIT -> bit
+  BMI -> bmi
+  BNE -> bne
+  BPL -> bpl
+  BRK -> brk
+  BVC -> bvc
+  BVS -> bvs
+  CLC -> clc
+  CLD -> cld
+  CLI -> cli
+  CLV -> clv
+  CMP -> cmp
+  CPX -> cpx
+  CPY -> cpy
+  DEC -> dec
+  DEX -> dex
+  DEY -> dey
+  EOR -> eor
+  INC -> inc
+  INX -> inx
+  INY -> iny
   JMP -> jmp
-  LDX -> ldx
-  STX -> stx
   JSR -> jsr
+  LDA -> lda
+  LDX -> ldx
+  LDY -> ldy
+  LSR -> lsr
   NOP -> nop
+  ORA -> ora
+  PHA -> pha
+  PHP -> php
+  PLA -> pla
+  PLP -> plp
+  ROL -> rol
+  ROR -> ror
+  RTI -> rti
+  RTS -> rts
+  SBC -> sbc
   SEC -> sec
---  INX -> inx
---  LDA -> lda
---  STA -> sta
-  op ->
-    error (printf "unimplemented op: %s" (show op))
-  where
---inx,lda,ldx,sta,stx,jmp :: Instruction
+  SED -> sed
+  SEI -> sei
+  STA -> sta
+  STX -> stx
+  STY -> sty
+  TAX -> tax
+  TAY -> tay
+  TSX -> tsx
+  TXA -> txa
+  TXS -> txs
+  TYA -> tya
+  --op -> error (printf "unimplemented op: %s" (show op))
 
-  _inx = Instruction0 "INX" $ \CpuState{x} ->
-    increment x
 
-  _lda = Instruction1 "LDA" $ \CpuState{a} v -> do
-    write a v
+adc, and, asl, bcc, bcs, beq, bit, bmi, bne, bpl, brk, bvc, bvs, clc, cld, cli, clv, cmp, cpx, cpy, dec, dex, dey, eor, inc, inx, iny, jmp, jsr, lda, ldx, ldy, lsr, nop, ora, pha, php, pla, plp, rol, ror, rti, rts, sbc, sec, sed, sei, sta, stx, sty, tax, tay, tsx, txa, txs, tya :: Instruction
 
-  ldx = Instruction1 "LDX" $ \CpuState{flags,x} v -> do
-    write x v
-    updateZN flags v
+adc = undefined
+and = undefined
+asl = undefined
+bcc = undefined
+--bcs = undefined
+beq = undefined
+bit = undefined
+bmi = undefined
+bne = undefined
+bpl = undefined
+brk = undefined
+bvc = undefined
+bvs = undefined
+clc = undefined
+cld = undefined
+cli = undefined
+clv = undefined
+cmp = undefined
+cpx = undefined
+cpy = undefined
+dec = undefined
+dex = undefined
+dey = undefined
+eor = undefined
+inc = undefined
+--inx = undefined
+iny = undefined
+--jmp = undefined
+--jsr = undefined
+--lda = undefined
+--ldx = undefined
+ldy = undefined
+lsr = undefined
+--nop = undefined
+ora = undefined
+pha = undefined
+php = undefined
+pla = undefined
+plp = undefined
+rol = undefined
+ror = undefined
+rti = undefined
+rts = undefined
+sbc = undefined
+--sec = undefined
+sed = undefined
+sei = undefined
+--sta = undefined
+--stx = undefined
+sty = undefined
+--tax = undefined
+tay = undefined
+tsx = undefined
+txa = undefined
+txs = undefined
+tya = undefined
 
-  _sta = Instruction2 "STA" $ \CpuState{a,bus} addr -> do
-    read a >>= write (bus addr)
 
-  stx = Instruction2 "STX" $ \CpuState{x,bus} addr -> do
-    read x >>= write (bus addr)
 
-  jmp = Instruction2 "JMP" $ \CpuState{ip} addr -> do
-    write ip addr
+ldx = Instruction1 "LDX" $ \CpuState{flags,x} v -> do
+  write x v
+  updateZN flags v
 
-  jsr = Instruction2 "JSR" $ \s@CpuState{ip} addr -> do
-    pc <- read ip
-    push16 s (pc+1)
-    write ip addr
+stx = Instruction2 "STX" $ \CpuState{x,bus} addr -> do
+  read x >>= write (bus addr)
 
-  nop = Instruction0 "NOP" $ \CpuState{} ->
-    pure ()
+jmp = Instruction2 "JMP" $ \CpuState{ip} addr -> do
+  write ip addr
 
-  sec = Instruction0 "SEC" $ \CpuState{flags} -> do
-    update (updateFlag C True) flags
+jsr = Instruction2 "JSR" $ \s@CpuState{ip} addr -> do
+  pc <- read ip
+  push16 s (pc+1)
+  write ip addr
 
+nop = Instruction0 "NOP" $ \CpuState{} ->
+  pure ()
+
+sec = Instruction0 "SEC" $ \CpuState{flags} -> do
+  update (updateFlag C True) flags
+
+
+
+inx = Instruction0 "INX" $ \CpuState{x} -> undefined $ do
+  increment x
+
+lda = Instruction1 "LDA" $ \CpuState{a} v -> undefined $ do
+  write a v
+
+sta = Instruction2 "STA" $ \CpuState{a,bus} addr -> undefined $ do
+  read a >>= write (bus addr)
+
+
+bcs = Instruction2 "BCS" $ \CpuState{ip,flags} addr -> do
+  whenFlag flags C $ write ip addr
+
+tax = Instruction0 "TAX" $ \CpuState{a,x} -> transfer a x
+
+
+transfer :: Ref U8 -> Ref U8 -> Eff ()
+transfer from to = do
+  read from >>= write to
+
+
+
+whenFlag :: Ref U8 -> Flag -> Eff () -> Eff ()
+whenFlag flags flag eff = do
+  flags <- read flags
+  when (testFlag flags flag) eff
+
+
+----------------------------------------------------------------------
+-- helpers
 
 push16 :: CpuState -> Addr -> Eff ()
 push16 s a = do
@@ -496,6 +688,9 @@ push CpuState{sp,bus} v = do
 
 increment :: Ref U8 -> Eff ()
 increment = update (+1)
+
+_increment16 :: Ref Addr -> Eff ()
+_increment16 = update (+1)
 
 decrement :: Ref U8 -> Eff ()
 decrement = update (\v -> v-1)

@@ -26,7 +26,7 @@ data Flag = C | Z | N
 
 flagBitNum :: Flag -> Int
 flagBitNum = \case
-  C -> 1
+  C -> 0
   Z -> 1
   N -> 7
 
