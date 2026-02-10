@@ -6,10 +6,7 @@
 nestest.size: nestest.out
   echo $$(cat $< | wc -l) > $out
 
-nestest.golden.simp : simpLog.sh nestest.golden
-  ./simpLog.sh nestest.golden > $out
-
-nestest.expected: nestest.golden.simp nestest.size
+nestest.expected: nestest.golden nestest.size
   cat $in | head -$$(cat nestest.size) > $out
 
 nestest.actual: nestest.out nestest.size # TODO jenga $in1 $In2

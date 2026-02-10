@@ -7,12 +7,10 @@ import Control.Monad (ap,liftM)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Data.List (insertBy)
 import Data.Ord (comparing)
+import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStrLn)
 import Types (U8)
-
-import GHC.IOArray (IOArray,newIOArray,writeIOArray) --,readIOArray)
-
 
 ----------------------------------------------------------------------
 -- Ref
@@ -74,11 +72,10 @@ runEffect eff0 = loop s0 eff0 k0
 
       DefineMemory size -> do
         mem :: IOArray Int U8 <- newIOArray (0,size - 1) 0
-        --let _ = (newIOArray, readIOArray, writeIOArray)
         let
           f :: Int -> Ref U8
           f addr = do
-            let onRead = error (show ("onRead",size,addr))
+            let onRead = IO (readIOArray mem addr)
             let onWrite v = IO (writeIOArray mem addr v)
             Ref {onRead,onWrite}
         k f s
@@ -98,11 +95,13 @@ runEffect eff0 = loop s0 eff0 k0
         firstJob:restJobs -> do
           let Job {resumeTime,kunit} = firstJob
           let s3 = s1 { cycles = resumeTime, jobs = restJobs }
-          --if timeToStop s3 then pure () else do
-          kunit s3
+          if timeToStop s3 then pure () else do
+            kunit s3
 
-    --timeToStop :: State -> Bool
-    --timeToStop State{cycles} = cycles >= maxCycles
+    timeToStop :: State -> Bool
+    timeToStop State{cycles} = cycles >= maxCycles
+
+    maxCycles = 400 -- TODO: hack
 
 putOut :: String -> IO ()
 putOut s = do
