@@ -11,7 +11,7 @@ main :: IO ()
 main = do
   nesfile <- loadNesFile "nestest.nes"
   let prg = prgOfNesFile nesfile
-  runEffect 22 (system prg)
+  runEffect (system prg)
 
 prgOfNesFile :: NesFile -> PRG.ROM
 prgOfNesFile NesFile{prgs} =

@@ -9,8 +9,10 @@ import Data.List (insertBy)
 import Data.Ord (comparing)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStrLn)
---import Text.Printf (printf)
---import Types (U8)
+import Types (U8)
+
+import GHC.IOArray (IOArray,newIOArray,writeIOArray) --,readIOArray)
+
 
 ----------------------------------------------------------------------
 -- Ref
@@ -36,13 +38,13 @@ data Eff a where
   Log :: String -> Eff ()
   IO :: IO a -> Eff a
   DefineRegister :: a -> Eff (Ref a)
-  --DefineMemory :: Int -> Eff (Int -> Ref U8)
+  DefineMemory :: Int -> Eff (Int -> Ref U8)
   Parallel :: Eff () -> Eff () -> Eff ()
   Advance :: Int -> Eff ()
   Cycles :: Eff Int
 
-runEffect :: Int -> Eff () -> IO ()
-runEffect maxCycles eff0 = loop s0 eff0 k0
+runEffect :: Eff () -> IO ()
+runEffect eff0 = loop s0 eff0 k0
   where
     s0 = State { cycles = 0, jobs = [] }
     k0 () _ = error "effects should never end"
@@ -70,13 +72,16 @@ runEffect maxCycles eff0 = loop s0 eff0 k0
               , onWrite = \v -> IO (writeIORef r v)
               } s
 
-      {-DefineMemory size -> do
+      DefineMemory size -> do
+        mem :: IOArray Int U8 <- newIOArray (0,size - 1) 0
+        --let _ = (newIOArray, readIOArray, writeIOArray)
         let
+          f :: Int -> Ref U8
           f addr = do
             let onRead = error (show ("onRead",size,addr))
-            let onWrite v = error (show ("onWrite",size,addr,v))
+            let onWrite v = IO (writeIOArray mem addr v)
             Ref {onRead,onWrite}
-        k f s-}
+        k f s
 
       Parallel m1 m2 -> do
         let j2 = Job { resumeTime = now, kunit = \s -> loop s m2 k0 }
@@ -93,11 +98,11 @@ runEffect maxCycles eff0 = loop s0 eff0 k0
         firstJob:restJobs -> do
           let Job {resumeTime,kunit} = firstJob
           let s3 = s1 { cycles = resumeTime, jobs = restJobs }
-          if timeToStop s3 then pure () else do
-            kunit s3
+          --if timeToStop s3 then pure () else do
+          kunit s3
 
-    timeToStop :: State -> Bool
-    timeToStop State{cycles} = cycles >= maxCycles
+    --timeToStop :: State -> Bool
+    --timeToStop State{cycles} = cycles >= maxCycles
 
 putOut :: String -> IO ()
 putOut s = do
