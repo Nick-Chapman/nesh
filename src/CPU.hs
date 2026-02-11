@@ -75,7 +75,9 @@ doMode s@State{bus,a=accumulator} instruction mode = \case
 
 
 fetchArgs :: State -> Instruction -> Mode -> Eff (Bool,Addr)
-fetchArgs State{ip,bus,x,y} instruction = \case
+fetchArgs State{ip,bus,x,y} instruction mode = case mode of
+
+  Accumulator -> error $ printf "fetchArgs/Accumulator"
 
   Immediate -> do
     pc <- read ip
@@ -133,11 +135,38 @@ fetchArgs State{ip,bus,x,y} instruction = \case
     let penalty = (hasPageCrossPenalty instruction && pageCross)
     pure (penalty,addr)
 
-  mode@Accumulator -> do
-    error $ printf "fetchArgs: unsupported addressing mode: %s" (show mode)
+  Indirect -> do
+    pc <- read ip
+    b1 <- read (bus (pc+1))
+    b2 <- read (bus (pc+2))
 
-  mode ->
-    error $ printf "Unimplemented addressing mode: %s" (show mode)
+    lo <- read (bus $ makeAddr HL {hi = b2,lo = b1})
+    hi <- read (bus $ makeAddr HL {hi = b2,lo = b1 + 1}) -- wraps oddly
+    let addr = makeAddr HL {hi,lo}
+    let penalty = False
+    pure (penalty,addr)
+
+  Implied -> todo
+
+  AbsoluteX -> todo
+
+  AbsoluteY -> do
+    pc <- read ip
+    lo <- read (bus (pc+1))
+    hi <- read (bus (pc+2))
+    let base = makeAddr HL {hi,lo}
+    y <- read y
+    let addr = base + fromIntegral y
+    let HL {hi = hi'} = splitAddr addr
+    let pageCross = hi /= hi'
+    let penalty = (hasPageCrossPenalty instruction && pageCross)
+    pure (penalty,addr)
+
+  ZeroPageX -> todo
+  ZeroPageY -> todo
+
+  where
+    todo = error $ printf "Unimplemented addressing mode: %s" (show mode)
 
 hasPageCrossPenalty :: Instruction -> Bool
 hasPageCrossPenalty = \case
@@ -164,13 +193,15 @@ seeArgs :: (Mode,[U8],Addr) -> String
 seeArgs = \case
   (Implied,[],_) -> ""
   (Accumulator,[],_) -> "A"
-  (Immediate,[b1],_) -> printf "#$%02X" b1
-  (ZeroPage,[b1],_) -> printf "$%02X" b1
+  (Immediate,[lo],_) -> printf "#$%02X" lo
+  (ZeroPage,[lo],_) -> printf "$%02X" lo
   (Absolute,[_,_],addr) -> printf "$%04X" addr
   (Relative,[_],addr) -> printf "$%04X" addr
-
-  (IndexedIndirectX,[b1],_) -> printf "($%02X,X)" b1
-  (IndirectIndexedY,[b1],_) -> printf "($%02X),Y" b1
+  (IndexedIndirectX,[lo],_) -> printf "($%02X,X)" lo
+  (IndirectIndexedY,[lo],_) -> printf "($%02X),Y" lo
+  (Indirect,[lo,hi],_) -> printf "($%04X)" (makeAddr HL {hi,lo})
+  (AbsoluteX,[lo,hi],_) -> printf "$%04X,X" (makeAddr HL {hi,lo})
+  (AbsoluteY,[lo,hi],_) -> printf "$%04X,Y" (makeAddr HL {hi,lo})
 
   (mode,bytes,_) ->
     error $ printf "seeArgs:%s/%s" (show mode) (show bytes)
@@ -188,7 +219,7 @@ makeCpuBus prg = do
       | a <= 0x07ff -> wram (fromIntegral a) -- TODO (mask for mirrors)
       | a >= 0xc000 && a <= 0xffff -> readPRG prg (a - 0xC000)
       | otherwise ->
-        error (show ("makeCpuBus",a))
+        error $ printf "makeCpuBus: adress = %04X" a
 
 readPRG :: PRG.ROM -> Addr -> Ref U8
 readPRG prg a = readonly (PRG.read prg a)
@@ -262,14 +293,14 @@ sizeMode = \case
   Absolute -> 2
   Implied -> 0
   Relative -> 1
-  AbsoluteX -> undefined
-  AbsoluteY -> undefined
-  ZeroPageX -> undefined
-  ZeroPageY -> undefined
+  AbsoluteX -> 2
+  AbsoluteY -> 2
+  ZeroPageX -> 1
+  ZeroPageY -> 1
   IndexedIndirectX -> 1
   IndirectIndexedY -> 1
   Accumulator -> 0
-  Indirect -> undefined
+  Indirect -> 2
 
 ----------------------------------------------------------------------
 
