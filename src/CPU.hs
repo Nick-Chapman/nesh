@@ -50,7 +50,7 @@ executeOpcode Config{trace} s@State{ip} opcode = do
   pure cycles
 
 doMode :: State -> Mode -> WithArg -> Eff (Addr, Eff ())
-doMode s@State{bus} mode = \case
+doMode s@State{bus,a=accumulator} mode = \case
   Arg0 eff -> pure (undefined,eff)
   Arg1 f -> do
     addr <- fetchArgs s mode
@@ -63,9 +63,19 @@ doMode s@State{bus} mode = \case
     addr <- fetchArgs s mode
     let eff = f addr
     pure (addr,eff)
+  ArgR f -> do
+    case mode of
+      Accumulator -> do
+        let eff = f accumulator
+        pure (undefined,eff)
+      _ -> do
+        addr <- fetchArgs s mode
+        let eff = f (bus addr)
+        pure (addr,eff)
+
 
 fetchArgs :: State -> Mode -> Eff Addr
-fetchArgs State{ip,bus} = \case
+fetchArgs State{ip,bus,x} = \case
 
   Immediate -> do
     pc <- read ip
@@ -91,6 +101,20 @@ fetchArgs State{ip,bus} = \case
     let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
     let addr = 2 + pc + fromIntegral dist
     pure addr
+
+  IndexedIndirectX -> do
+    pc <- read ip
+    arg <- read (bus (pc+1))
+    x <- read x
+    let first = makeAddr HL { hi = 0, lo = arg + x }
+    let second = makeAddr HL { hi = 0, lo = arg + x + 1 }
+    lo <- read (bus first)
+    hi <- read (bus second)
+    let addr = makeAddr HL { hi, lo }
+    pure addr
+
+  mode@Accumulator -> do
+    error $ printf "fetchArgs: unsupported addressing mode: %s" (show mode)
 
   mode ->
     error $ printf "Unimplemented addressing mode: %s" (show mode)
@@ -120,6 +144,9 @@ seeArgs = \case
   (ZeroPage,[b1],_) -> printf "$%02X" b1
   (Absolute,[_,_],addr) -> printf "$%04X" addr
   (Relative,[_],addr) -> printf "$%04X" addr
+
+  (IndexedIndirectX,[b1],_) -> printf "($%02X,X)" b1
+
   (mode,bytes,_) ->
     error $ printf "seeArgs:%s/%s" (show mode) (show bytes)
 
@@ -214,7 +241,7 @@ sizeMode = \case
   AbsoluteY -> undefined
   ZeroPageX -> undefined
   ZeroPageY -> undefined
-  IndexedIndirectX -> undefined
+  IndexedIndirectX -> 1
   IndirectIndexedY -> undefined
   Accumulator -> 0
   Indirect -> undefined
@@ -225,49 +252,26 @@ data WithArg
   = Arg0 (Eff ())
   | Arg1 (U8 -> Eff ())
   | Arg2 (Addr -> Eff ())
+  | ArgR (Ref U8 -> Eff ())
 
 executeWithArg :: State -> Instruction -> WithArg
 executeWithArg s@State{ip,flags,x,y,a,sp} = \case
 
   INX -> Arg0 $ do modify s x (+1)
   INY -> Arg0 $ do modify s y (+1)
-  --INC -> undefined
+  INC -> ArgR $ \r -> do modify s r (+1)
+
   DEX -> Arg0 $ do modify s x (subtract 1)
   DEY -> Arg0 $ do modify s y (subtract 1)
-  --DEC -> undefined
+  DEC -> ArgR $ \r -> do modify s r (subtract 1)
 
   ADC -> Arg1 $ \val -> adc s val
   SBC -> Arg1 $ \val -> adc s (255 - val)
 
-  LSR -> Arg0 $ do
-    old <- read a
-    let new = old `shiftR` 1
-    writeFlag s C (old `testBit` 0)
-    write a new
-    updateZN s new
-
-  ROR -> Arg0 $ do
-    old <- read a
-    c <- readFlag s C
-    let new = old `shiftR` 1 .|. if c then 128 else 0
-    writeFlag s C (old `testBit` 0)
-    write a new
-    updateZN s new
-
-  ASL -> Arg0 $ do
-    old <- read a
-    let new = old `shiftL` 1
-    writeFlag s C (old `testBit` 7)
-    write a new
-    updateZN s new
-
-  ROL -> Arg0 $ do
-    old <- read a
-    c <- readFlag s C
-    let new = old `shiftL` 1 .|. if c then 1 else 0
-    writeFlag s C (old `testBit` 7)
-    write a new
-    updateZN s new
+  LSR -> ArgR $ do lsr s
+  ROR -> ArgR $ do ror s
+  ASL -> ArgR $ do asl s
+  ROL -> ArgR $ do rol s
 
   CLC -> Arg0 $ do writeFlag s C False
   CLD -> Arg0 $ do writeFlag s D False
@@ -284,7 +288,7 @@ executeWithArg s@State{ip,flags,x,y,a,sp} = \case
 
   STA -> Arg2 $ do store s a
   STX -> Arg2 $ do store s x
-  --STY -> undefined
+  STY -> Arg2 $ do store s y
 
   TAX -> Arg0 $ do transfer s a x
   TAY -> Arg0 $ do transfer s a y
@@ -360,7 +364,40 @@ executeWithArg s@State{ip,flags,x,y,a,sp} = \case
 
   i -> error $ printf "Unimplemented instruction: %s" (show i)
 
-  where
+
+lsr :: State -> Ref U8 -> Eff ()
+lsr s r = do
+  old <- read r
+  let new = old `shiftR` 1
+  writeFlag s C (old `testBit` 0)
+  write r new
+  updateZN s new
+
+ror :: State -> Ref U8 -> Eff ()
+ror s r = do
+  old <- read r
+  c <- readFlag s C
+  let new = old `shiftR` 1 .|. if c then 128 else 0
+  writeFlag s C (old `testBit` 0)
+  write r new
+  updateZN s new
+
+asl :: State -> Ref U8 -> Eff ()
+asl s r = do
+  old <- read r
+  let new = old `shiftL` 1
+  writeFlag s C (old `testBit` 7)
+  write r new
+  updateZN s new
+
+rol :: State -> Ref U8 -> Eff ()
+rol s r = do
+  old <- read r
+  c <- readFlag s C
+  let new = old `shiftL` 1 .|. if c then 1 else 0
+  writeFlag s C (old `testBit` 7)
+  write r new
+  updateZN s new
 
 adc :: State -> U8 -> Eff ()
 adc s@State{a} val = do
