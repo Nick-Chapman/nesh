@@ -50,15 +50,25 @@ executeOpcode Config{trace} s@State{ip} opcode = do
   pure (cycles + if penalty then 1 else 0)
 
 doMode :: State -> Instruction -> Mode -> WithArg -> Eff (Bool, Addr, Eff ())
-doMode s@State{bus,a=accumulator} instruction mode = \case
+doMode s@State{bus,ip,a=accumulator} instruction mode = \case
   Arg0 eff -> pure (False,undefined,eff)
   Arg1 f -> do
-    (penalty,addr) <- fetchArgs s instruction mode
-    let
-      eff = do
-        byte <- read (bus addr)
-        f byte
-    pure (penalty,addr,eff)
+    case mode of
+      Immediate -> do
+        pc <- read ip
+        let penalty = False
+        let
+          eff = do
+            byte <- read (bus (pc+1))
+            f byte
+        pure (penalty,undefined,eff)
+      _ -> do
+        (penalty,addr) <- fetchArgs s instruction mode
+        let
+          eff = do
+            byte <- read (bus addr)
+            f byte
+        pure (penalty,addr,eff)
   Arg2 f -> do
     (penalty,addr) <- fetchArgs s instruction mode
     let eff = f addr
@@ -75,98 +85,102 @@ doMode s@State{bus,a=accumulator} instruction mode = \case
 
 
 fetchArgs :: State -> Instruction -> Mode -> Eff (Bool,Addr)
-fetchArgs State{ip,bus,x,y} instruction mode = case mode of
+fetchArgs s@State{ip,x,y} instruction mode = case mode of
 
   Accumulator -> error $ printf "fetchArgs/Accumulator"
-
-  Immediate -> do
-    pc <- read ip
-    let addr = pc + 1  -- TODO: weird?
-    let penalty = False
-    pure (penalty,addr)
-
-  Absolute -> do
-    pc <- read ip
-    lo <- read (bus (pc+1))
-    hi <- read (bus (pc+2))
-    let addr = makeAddr HL {hi,lo}
-    let penalty = False
-    pure (penalty,addr)
-
-  ZeroPage -> do
-    pc <- read ip
-    lo <- read (bus (pc+1))
-    let addr = makeAddr HL { hi = 0, lo }
-    let penalty = False
-    pure (penalty,addr)
-
-  Relative -> do
-    pc <- read ip
-    off <- read (bus (pc+1))
-    let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
-    let addr = 2 + pc + fromIntegral dist
-    let penalty = False
-    pure (penalty,addr)
-
-  IndexedIndirectX -> do
-    pc <- read ip
-    arg <- read (bus (pc+1))
-    x <- read x
-    let first = makeAddr HL { hi = 0, lo = arg + x }
-    let second = makeAddr HL { hi = 0, lo = arg + x + 1 }
-    lo <- read (bus first)
-    hi <- read (bus second)
-    let addr = makeAddr HL { hi, lo }
-    let penalty = False
-    pure (penalty,addr)
-
-  IndirectIndexedY -> do
-    pc <- read ip
-    zeroPageAddress <- read (bus (pc+1))
-    let first = makeAddr HL { hi = 0, lo = zeroPageAddress }
-    let second = makeAddr HL { hi = 0, lo = zeroPageAddress + 1 }
-    hi <- read (bus second)
-    lo <- read (bus first)
-    let baseAddr = makeAddr HL { hi, lo }
-    y <- read y
-    let addr = baseAddr + fromIntegral y
-    let HL {hi = hi'} = splitAddr addr
-    let pageCross = hi /= hi'
-    let penalty = (hasPageCrossPenalty instruction && pageCross)
-    pure (penalty,addr)
-
-  Indirect -> do
-    pc <- read ip
-    b1 <- read (bus (pc+1))
-    b2 <- read (bus (pc+2))
-
-    lo <- read (bus $ makeAddr HL {hi = b2,lo = b1})
-    hi <- read (bus $ makeAddr HL {hi = b2,lo = b1 + 1}) -- wraps oddly
-    let addr = makeAddr HL {hi,lo}
-    let penalty = False
-    pure (penalty,addr)
+  Immediate -> error $ printf "fetchArgs/Immediate"
 
   Implied -> todo
+
+  Absolute -> do
+    addr <- immediateAddr s
+    let penalty = False
+    pure (penalty,addr)
 
   AbsoluteX -> todo
 
   AbsoluteY -> do
-    pc <- read ip
-    lo <- read (bus (pc+1))
-    hi <- read (bus (pc+2))
-    let base = makeAddr HL {hi,lo}
+    base <- immediateAddr s
     y <- read y
     let addr = base + fromIntegral y
-    let HL {hi = hi'} = splitAddr addr
-    let pageCross = hi /= hi'
-    let penalty = (hasPageCrossPenalty instruction && pageCross)
+    let penalty = (hasPageCrossPenalty instruction && pageCross base addr)
+    pure (penalty,addr)
+
+  ZeroPage -> do
+    addr <- immediateZeroPageAddr s
+    let penalty = False
     pure (penalty,addr)
 
   ZeroPageX -> todo
   ZeroPageY -> todo
 
+  Relative -> do
+    pc <- read ip
+    off <- immediateByte s
+    let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
+    let addr = 2 + pc + fromIntegral dist
+    let penalty = False
+    pure (penalty,addr)
+
+  Indirect -> do
+    base <- immediateAddr s
+    addr <- indirect s base
+    let penalty = False
+    pure (penalty,addr)
+
+  IndexedIndirectX -> do
+    byte <- immediateByte s
+    x <- read x
+    let zpAddr = makeAddr HL { hi = 0, lo = byte + x }
+    addr <- indirect s zpAddr
+    let penalty = False
+    pure (penalty,addr)
+
+  IndirectIndexedY -> do
+    zpAddr <- immediateZeroPageAddr s
+    base <- indirect s zpAddr
+    y <- read y
+    let addr = base + fromIntegral y
+    let penalty = (hasPageCrossPenalty instruction && pageCross base addr)
+    pure (penalty,addr)
+
   where
     todo = error $ printf "Unimplemented addressing mode: %s" (show mode)
+
+
+indirect :: State -> Addr -> Eff Addr
+indirect State{bus} base = do
+  lo <- read (bus base)
+  hi <- read (bus $ nextAddrPageWrapped base)
+  pure $ makeAddr HL { hi, lo }
+
+nextAddrPageWrapped :: Addr -> Addr
+nextAddrPageWrapped a = do
+  let HL {lo,hi} = splitAddr a
+  makeAddr HL { hi, lo = 1 + lo }
+
+immediateZeroPageAddr :: State -> Eff Addr
+immediateZeroPageAddr s = do
+  lo <- immediateByte s
+  pure $ makeAddr HL { hi = 0, lo }
+
+immediateByte :: State -> Eff U8
+immediateByte State{bus,ip} = do
+  pc <- read ip
+  read (bus (pc + 1))
+
+immediateAddr :: State -> Eff Addr
+immediateAddr State{bus,ip} = do
+  pc <- read ip
+  lo <- read (bus (pc+1))
+  hi <- read (bus (pc+2))
+  pure $ makeAddr HL {hi,lo}
+
+pageCross :: Addr -> Addr -> Bool
+pageCross a1 a2 = do
+  let HL {hi = hi1} = splitAddr a1
+  let HL {hi = hi2} = splitAddr a2
+  hi1 /= hi2
 
 hasPageCrossPenalty :: Instruction -> Bool
 hasPageCrossPenalty = \case
