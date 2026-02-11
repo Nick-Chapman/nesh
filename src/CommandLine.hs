@@ -9,6 +9,7 @@ import Prelude hiding (read)
 import Prelude qualified
 import System.Environment (getArgs)
 import Text.Printf (printf)
+import Types (Addr)
 
 main :: IO ()
 main = do
@@ -27,28 +28,34 @@ prgOfNesFile NesFile{prgs} =
       error $ "emu, unexpected number of prg: " <> show (length prgs)
 
 system :: Config -> PRG.ROM -> Eff ()
-system Config{stop_at,trace_cpu} prg = do
-  let cpu = CPU.cpu CPU.Config { trace = trace_cpu, stop_at = stop_at } prg
+system Config{stop_at,trace_cpu,init_pc} prg = do
+  let cpu = CPU.cpu CPU.Config { trace = trace_cpu
+                               , stop_at = stop_at
+                               , init_pc = init_pc
+                               } prg
   Parallel cpu ppu
 
 data Config = Config
   { rom :: FilePath
   , trace_cpu :: Bool
   , stop_at :: Maybe Int
+  , init_pc :: Maybe Addr -- Nothing means use reset vector
   }
 
 parseConfig :: [String] -> Config
 parseConfig = loop config0
   where
     config0 = Config
-      { rom = "nestest.nes"
+      { rom = "[some.rom]"
       , trace_cpu = False
       , stop_at = Nothing
+      , init_pc = Nothing
       }
     loop :: Config -> [String] -> Config
     loop acc = \case
       [] -> acc
       "--trace-cpu":rest -> loop acc { trace_cpu = True } rest
       "--stop-at":n:rest -> loop acc { stop_at = Just (Prelude.read n) } rest
+      "--init-pc":n:rest -> loop acc { init_pc = Just (Prelude.read n) } rest
       flag@('-':_):_ -> error (printf "unknown flag: %s" flag)
       rom:rest -> loop acc { rom } rest

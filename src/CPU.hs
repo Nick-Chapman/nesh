@@ -12,13 +12,17 @@ import Types (U8,Addr,HL(..),makeAddr,splitAddr,Flag(..),testFlag,updateFlag)
 ----------------------------------------------------------------------
 -- cpu
 
-data Config = Config { trace :: Bool, stop_at :: Maybe Int }
+data Config = Config
+  { trace :: Bool
+  , stop_at :: Maybe Int
+  , init_pc :: Maybe Addr
+  }
 
 cpu :: Config -> PRG.ROM -> Eff ()
 cpu config prg = do
   bus <- makeCpuBus prg
   s <- mkState bus
-  Advance 7 -- reset sequence
+  initialize config s
   loop 0 s
   where
     loop :: Int -> State -> Eff ()
@@ -29,6 +33,22 @@ cpu config prg = do
       Advance cycles
       maybeHalt config
       loop (i+1) s
+
+initialize :: Config -> State -> Eff ()
+initialize Config{init_pc} s@State{ip} =
+  case init_pc of
+    Just addr -> do
+      write ip addr  -- used by nestest
+      Advance 7
+    Nothing ->
+      jumpResetVector s
+
+jumpResetVector :: State -> Eff ()
+jumpResetVector State{bus,ip} = do
+  lo <- read (bus 0xfffc)
+  hi <- read (bus 0xfffd)
+  let addr = makeAddr HL { lo, hi }
+  write ip addr
 
 maybeHalt :: Config -> Eff ()
 maybeHalt Config{stop_at} = do
@@ -315,7 +335,7 @@ data State = State
 
 mkState :: Bus -> Eff State
 mkState bus = do
-  ip <- DefineRegister 0xc000
+  ip <- DefineRegister 0
   a <- DefineRegister 0
   x <- DefineRegister 0
   y <- DefineRegister 0
