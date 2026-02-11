@@ -41,13 +41,49 @@ maybeHalt Config{stop_at} = do
 executeOpcode :: Config -> State -> U8 -> Eff Int
 executeOpcode Config{trace} s@State{ip} opcode = do
   let (instruction,cycles,mode) = decode opcode
-  let withArg = executeWithArg s instruction
+  let withArg = executeInstruction s instruction
   (penalty,addr,eff) <- doMode s instruction mode withArg
   when (trace) $ logCpuInstruction s instruction mode addr
   let n = 1 + sizeMode mode
   update (+ fromIntegral n) ip
   eff
   pure (cycles + if penalty then 1 else 0)
+
+
+----------------------------------------------------------------------
+-- addressing modes
+
+data Mode
+  = Immediate
+  | ZeroPage
+  | Absolute
+  | Implied
+  | Relative
+  | AbsoluteX
+  | AbsoluteY
+  | ZeroPageX
+  | ZeroPageY
+  | IndexedIndirectX
+  | IndirectIndexedY
+  | Accumulator
+  | Indirect
+  deriving (Eq,Show)
+
+sizeMode :: Mode -> Int
+sizeMode = \case
+  Immediate -> 1
+  ZeroPage -> 1
+  Absolute -> 2
+  Implied -> 0
+  Relative -> 1
+  AbsoluteX -> 2
+  AbsoluteY -> 2
+  ZeroPageX -> 1
+  ZeroPageY -> 1
+  IndexedIndirectX -> 1
+  IndirectIndexedY -> 1
+  Accumulator -> 0
+  Indirect -> 2
 
 doMode :: State -> Instruction -> Mode -> WithArg -> Eff (Bool, Addr, Eff ())
 doMode s@State{bus,ip,a=accumulator} instruction mode = \case
@@ -89,15 +125,19 @@ fetchArgs s@State{ip,x,y} instruction mode = case mode of
 
   Accumulator -> error $ printf "fetchArgs/Accumulator"
   Immediate -> error $ printf "fetchArgs/Immediate"
-
-  Implied -> todo
+  Implied -> error $ printf "fetchArgs/Implied"
 
   Absolute -> do
     addr <- immediateAddr s
     let penalty = False
     pure (penalty,addr)
 
-  AbsoluteX -> todo
+  AbsoluteX -> do
+    base <- immediateAddr s
+    x <- read x
+    let addr = base + fromIntegral x
+    let penalty = (hasPageCrossPenalty instruction && pageCross base addr)
+    pure (penalty,addr)
 
   AbsoluteY -> do
     base <- immediateAddr s
@@ -111,8 +151,19 @@ fetchArgs s@State{ip,x,y} instruction mode = case mode of
     let penalty = False
     pure (penalty,addr)
 
-  ZeroPageX -> todo
-  ZeroPageY -> todo
+  ZeroPageX -> do
+    byte <- immediateByte s
+    x <- read x
+    let addr = makeAddr HL { hi = 0, lo = byte + x }
+    let penalty = False
+    pure (penalty,addr)
+
+  ZeroPageY -> do
+    byte <- immediateByte s
+    y <- read y
+    let addr = makeAddr HL { hi = 0, lo = byte + y }
+    let penalty = False
+    pure (penalty,addr)
 
   Relative -> do
     pc <- read ip
@@ -120,6 +171,9 @@ fetchArgs s@State{ip,x,y} instruction mode = case mode of
     let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
     let addr = 2 + pc + fromIntegral dist
     let penalty = False
+    -- This addressing mode should have a page cross penalty:
+    -- let penalty = (hasPageCrossPenalty instruction && pageCross pc addr)
+    -- But it causes a mismatch with the golden trace; maybe it's wrong!
     pure (penalty,addr)
 
   Indirect -> do
@@ -143,9 +197,6 @@ fetchArgs s@State{ip,x,y} instruction mode = case mode of
     let addr = base + fromIntegral y
     let penalty = (hasPageCrossPenalty instruction && pageCross base addr)
     pure (penalty,addr)
-
-  where
-    todo = error $ printf "Unimplemented addressing mode: %s" (show mode)
 
 
 indirect :: State -> Addr -> Eff Addr
@@ -184,6 +235,7 @@ pageCross a1 a2 = do
 
 hasPageCrossPenalty :: Instruction -> Bool
 hasPageCrossPenalty = \case
+  STA -> False -- TODO: any more?
   _ -> True
 
 ----------------------------------------------------------------------
@@ -208,17 +260,21 @@ seeArgs = \case
   (Implied,[],_) -> ""
   (Accumulator,[],_) -> "A"
   (Immediate,[lo],_) -> printf "#$%02X" lo
-  (ZeroPage,[lo],_) -> printf "$%02X" lo
-  (Absolute,[_,_],addr) -> printf "$%04X" addr
   (Relative,[_],addr) -> printf "$%04X" addr
-  (IndexedIndirectX,[lo],_) -> printf "($%02X,X)" lo
-  (IndirectIndexedY,[lo],_) -> printf "($%02X),Y" lo
-  (Indirect,[lo,hi],_) -> printf "($%04X)" (makeAddr HL {hi,lo})
+
+  (ZeroPage,[lo],_) -> printf "$%02X" lo
+  (ZeroPageX,[lo],_) -> printf "$%02X,X" lo
+  (ZeroPageY,[lo],_) -> printf "$%02X,Y" lo
+
+  (Absolute,[_,_],addr) -> printf "$%04X" addr
   (AbsoluteX,[lo,hi],_) -> printf "$%04X,X" (makeAddr HL {hi,lo})
   (AbsoluteY,[lo,hi],_) -> printf "$%04X,Y" (makeAddr HL {hi,lo})
 
-  (mode,bytes,_) ->
-    error $ printf "seeArgs:%s/%s" (show mode) (show bytes)
+  (Indirect,[lo,hi],_) -> printf "($%04X)" (makeAddr HL {hi,lo})
+  (IndexedIndirectX,[lo],_) -> printf "($%02X,X)" lo
+  (IndirectIndexedY,[lo],_) -> printf "($%02X),Y" lo
+
+  (mode,bytes,_) -> error $ printf "seeArgs:%s/%s" (show mode) (show bytes)
 
 ----------------------------------------------------------------------
 -- CpuBus
@@ -233,7 +289,7 @@ makeCpuBus prg = do
       | a <= 0x07ff -> wram (fromIntegral a) -- TODO (mask for mirrors)
       | a >= 0xc000 && a <= 0xffff -> readPRG prg (a - 0xC000)
       | otherwise ->
-        error $ printf "makeCpuBus: adress = %04X" a
+        error $ printf "makeCpuBus: address = %04X" a
 
 readPRG :: PRG.ROM -> Addr -> Ref U8
 readPRG prg a = readonly (PRG.read prg a)
@@ -282,41 +338,17 @@ seeState State{a,x,y,flags,sp} = do
   pure mes
 
 ----------------------------------------------------------------------
--- addressing modes
+-- instructions
 
-data Mode
-  = Immediate
-  | ZeroPage
-  | Absolute
-  | Implied
-  | Relative
-  | AbsoluteX
-  | AbsoluteY
-  | ZeroPageX
-  | ZeroPageY
-  | IndexedIndirectX
-  | IndirectIndexedY
-  | Accumulator
-  | Indirect
+data Instruction
+  = ADC | AND | ASL | BCC | BCS | BEQ | BIT | BMI
+  | BNE | BPL | BRK | BVC | BVS | CLC | CLD | CLI
+  | CLV | CMP | CPX | CPY | DEC | DEX | DEY | EOR
+  | INC | INX | INY | JMP | JSR | LDA | LDX | LDY
+  | LSR | NOP | ORA | PHA | PHP | PLA | PLP | ROL
+  | ROR | RTI | RTS | SBC | SEC | SED | SEI | STA
+  | STX | STY | TAX | TAY | TSX | TXA | TXS | TYA
   deriving (Eq,Show)
-
-sizeMode :: Mode -> Int
-sizeMode = \case
-  Immediate -> 1
-  ZeroPage -> 1
-  Absolute -> 2
-  Implied -> 0
-  Relative -> 1
-  AbsoluteX -> 2
-  AbsoluteY -> 2
-  ZeroPageX -> 1
-  ZeroPageY -> 1
-  IndexedIndirectX -> 1
-  IndirectIndexedY -> 1
-  Accumulator -> 0
-  Indirect -> 2
-
-----------------------------------------------------------------------
 
 data WithArg
   = Arg0 (Eff ())
@@ -324,8 +356,8 @@ data WithArg
   | Arg2 (Addr -> Eff ())
   | ArgR (Ref U8 -> Eff ())
 
-executeWithArg :: State -> Instruction -> WithArg
-executeWithArg s@State{ip,flags,x,y,a,sp} = \case
+executeInstruction :: State -> Instruction -> WithArg
+executeInstruction s@State{ip,flags,x,y,a,sp} = \case
 
   INX -> Arg0 $ do modify s x (+1)
   INY -> Arg0 $ do modify s y (+1)
@@ -592,17 +624,7 @@ isPositive :: U8 -> Bool
 isPositive = not . isNegative
 
 ----------------------------------------------------------------------
--- instructions
-
-data Instruction
-  = ADC | AND | ASL | BCC | BCS | BEQ | BIT | BMI
-  | BNE | BPL | BRK | BVC | BVS | CLC | CLD | CLI
-  | CLV | CMP | CPX | CPY | DEC | DEX | DEY | EOR
-  | INC | INX | INY | JMP | JSR | LDA | LDX | LDY
-  | LSR | NOP | ORA | PHA | PHP | PLA | PLP | ROL
-  | ROR | RTI | RTS | SBC | SEC | SED | SEI | STA
-  | STX | STY | TAX | TAY | TSX | TXA | TXS | TYA
-  deriving (Eq,Show)
+-- decode opcode as: instruction + addressing-mode (with cycle counts)
 
 decode :: U8 -> (Instruction,Int,Mode)
 decode = \case

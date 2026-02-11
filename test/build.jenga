@@ -12,4 +12,4 @@ nestest.actual: nestest.out nestest.size # TODO jenga $in1 $in2
   cat nestest.out | head -$$(cat nestest.size) > $out
 
 nestest.out : ../src/emu.exe nestest.nes
-  ./$in nestest.nes --trace-cpu --stop-at 10000 > $out || true
+  ./$in nestest.nes --trace-cpu --stop-at 14575 > $out || true

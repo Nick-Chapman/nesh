@@ -1,6 +1,6 @@
 
 *dev : src/emu.exe test/nestest.nes
-  ./$in nestest.nes --trace-cpu --stop-at 27000
+  ./$in nestest.nes --trace-cpu --stop-at 27000 #14575
 
 *dk : src/emu.exe ~/nesrom/dk.nes
   ./$in dk.nes --trace-cpu
