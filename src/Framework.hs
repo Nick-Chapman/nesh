@@ -99,9 +99,9 @@ runEffect eff0 = loop s0 eff0 k0
             kunit s3
 
     timeToStop :: State -> Bool
-    timeToStop State{cycles} = cycles >= maxCycles
+    timeToStop State{cycles} = cycles > maxCycles
 
-    maxCycles = 3000 -- TODO: hack
+    maxCycles = 2545 -- TODO: hack
 
 putOut :: String -> IO ()
 putOut s = do

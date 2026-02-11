@@ -387,14 +387,13 @@ executeWithArg s@State{ip,flags,x,y,a,sp} = \case
   DEY -> Arg0 $ do modify s y (subtract 1)
   --DEC -> undefined
 
-  ADC -> Arg1 $ \value -> adc s value
-  SBC -> Arg1 $ \value -> adc s (255 - value)
+  ADC -> Arg1 $ \val -> adc s val
+  SBC -> Arg1 $ \val -> adc s (255 - val)
 
   LSR -> Arg0 $ do
     old <- read a
     let new = old `shiftR` 1
-    let c' = old `testBit` 0
-    writeFlag s C c'
+    writeFlag s C (old `testBit` 0)
     write a new
     updateZN s new
 
@@ -402,16 +401,14 @@ executeWithArg s@State{ip,flags,x,y,a,sp} = \case
     old <- read a
     c <- readFlag s C
     let new = old `shiftR` 1 .|. if c then 128 else 0
-    let c' = old `testBit` 0
-    writeFlag s C c'
+    writeFlag s C (old `testBit` 0)
     write a new
     updateZN s new
 
   ASL -> Arg0 $ do
     old <- read a
     let new = old `shiftL` 1
-    let c' = old `testBit` 7
-    writeFlag s C c'
+    writeFlag s C (old `testBit` 7)
     write a new
     updateZN s new
 
@@ -419,38 +416,35 @@ executeWithArg s@State{ip,flags,x,y,a,sp} = \case
     old <- read a
     c <- readFlag s C
     let new = old `shiftL` 1 .|. if c then 1 else 0
-    let c' = old `testBit` 7
-    writeFlag s C c'
+    writeFlag s C (old `testBit` 7)
     write a new
     updateZN s new
 
-  CLC -> Arg0 $ do clearFlag s C
-  CLD -> Arg0 $ do clearFlag s D
-  CLI -> Arg0 $ do clearFlag s I
-  CLV -> Arg0 $ do clearFlag s V
+  CLC -> Arg0 $ do writeFlag s C False
+  CLD -> Arg0 $ do writeFlag s D False
+  CLI -> Arg0 $ do writeFlag s I False
+  CLV -> Arg0 $ do writeFlag s V False
 
-  SEC -> Arg0 $ do setFlag s C
-  SED -> Arg0 $ do setFlag s D
-  SEI -> Arg0 $ do setFlag s I
+  SEC -> Arg0 $ do writeFlag s C True
+  SED -> Arg0 $ do writeFlag s D True
+  SEI -> Arg0 $ do writeFlag s I True
 
-  LDA -> Arg1 $ \v -> do load s a v
-  LDX -> Arg1 $ \v -> do load s x v
-  LDY -> Arg1 $ \v -> do load s y v
+  LDA -> Arg1 $ do load s a
+  LDX -> Arg1 $ do load s x
+  LDY -> Arg1 $ do load s y
 
-  STA -> Arg2 $ \addr -> do store s a addr
-  STX -> Arg2 $ \addr -> do store s x addr
+  STA -> Arg2 $ do store s a
+  STX -> Arg2 $ do store s x
   --STY -> undefined
 
-  TAX -> Arg0 $ transfer s a x
-  TAY -> Arg0 $ transfer s a y
-  TXA -> Arg0 $ transfer s x a
-  TYA -> Arg0 $ transfer s y a
-  TSX -> Arg0 $ transfer s sp x
-  TXS -> Arg0 $ read x >>= write sp -- no update Z/N
+  TAX -> Arg0 $ do transfer s a x
+  TAY -> Arg0 $ do transfer s a y
+  TXA -> Arg0 $ do transfer s x a
+  TYA -> Arg0 $ do transfer s y a
+  TSX -> Arg0 $ do transfer s sp x
+  TXS -> Arg0 $ do read x >>= write sp -- no update Z/N
 
-  PHA -> Arg0 $ do
-    a <- read a
-    push s a
+  PHA -> Arg0 $ do read a >>= push s
 
   PHP -> Arg0 $ do
     p <- read flags
@@ -465,32 +459,32 @@ executeWithArg s@State{ip,flags,x,y,a,sp} = \case
     v <- pop s
     write flags (setBit (clearBit v 4) 5)
 
-  BIT -> Arg1 $ \value -> do
+  BIT -> Arg1 $ \val -> do
     a <- read a
-    let z = (value .&. a) == 0
-    let n = isNegative value
-    let v = value `testBit` 6
-    update (updateFlag Z z) flags
-    update (updateFlag N n) flags
-    update (updateFlag V v) flags
+    let z = (val .&. a) == 0
+    let n = isNegative val
+    let v = val `testBit` 6
+    writeFlag s Z z
+    writeFlag s N n
+    writeFlag s V v
 
-  CMP -> Arg1 $ \value -> compare s a value
-  CPX -> Arg1 $ \value -> compare s x value
-  CPY -> Arg1 $ \value -> compare s y value
+  CMP -> Arg1 $ do compare s a
+  CPX -> Arg1 $ do compare s x
+  CPY -> Arg1 $ do compare s y
 
-  AND -> Arg1 $ binop s (.&.)
-  ORA -> Arg1 $ binop s (.|.)
-  EOR -> Arg1 $ binop s xor
+  AND -> Arg1 $ do binop s (.&.)
+  ORA -> Arg1 $ do binop s (.|.)
+  EOR -> Arg1 $ do binop s xor
 
-  BCS -> Arg2 $ \addr -> do branchFlagSet s C addr
-  BEQ -> Arg2 $ \addr -> do branchFlagSet s Z addr
-  BVS -> Arg2 $ \addr -> do branchFlagSet s V addr
-  BMI -> Arg2 $ \addr -> do branchFlagSet s N addr
+  BCS -> Arg2 $ do branchFlagSet s C
+  BEQ -> Arg2 $ do branchFlagSet s Z
+  BVS -> Arg2 $ do branchFlagSet s V
+  BMI -> Arg2 $ do branchFlagSet s N
 
-  BCC -> Arg2 $ \addr -> do branchFlagClear s C addr
-  BNE -> Arg2 $ \addr -> do branchFlagClear s Z addr
-  BVC -> Arg2 $ \addr -> do branchFlagClear s V addr
-  BPL -> Arg2 $ \addr -> do branchFlagClear s N addr
+  BCC -> Arg2 $ do branchFlagClear s C
+  BNE -> Arg2 $ do branchFlagClear s Z
+  BVC -> Arg2 $ do branchFlagClear s V
+  BPL -> Arg2 $ do branchFlagClear s N
 
   JMP -> Arg2 $ \addr -> do
     write ip addr
@@ -520,25 +514,22 @@ executeWithArg s@State{ip,flags,x,y,a,sp} = \case
   where
 
 adc :: State -> U8 -> Eff ()
-adc s@State{a,flags} val = do
-  flagsV <- read flags
-  oldValue <- read a
-  let c = testFlag flagsV C
-  let result :: Int = fromIntegral oldValue + fromIntegral val + if c then 1 else 0
-  let newValue :: U8 = fromIntegral result
-  write a newValue
-  let cout = (result >= 256)
-  let vout =
-        (isPositive oldValue && isPositive val && isNegative newValue) ||
-        (isNegative oldValue && isNegative val && isPositive newValue)
-  update (updateFlag V vout) flags
-  update (updateFlag C cout) flags
-  updateZN s newValue
+adc s@State{a} val = do
+  old <- read a
+  c <- readFlag s C
+  let result :: Int = fromIntegral old + fromIntegral val + if c then 1 else 0
+  let new :: U8 = fromIntegral result
+  write a new
+  updateZN s new
+  writeFlag s C (result >= 256)
+  writeFlag s V $
+    (isPositive old && isPositive val && isNegative new) ||
+    (isNegative old && isNegative val && isPositive new)
 
 binop :: State -> (U8 -> U8 -> U8) -> U8 -> Eff ()
-binop s@State{a} f value = do
+binop s@State{a} f val = do
   old <- read a
-  let new = f old value
+  let new = f old val
   write a new
   updateZN s new
 
@@ -550,35 +541,28 @@ modify s r f = do
   updateZN s new
 
 compare :: State -> Ref U8 -> U8 -> Eff ()
-compare State{flags} r value = do
+compare s r val = do
   v <- read r
-  let z = value == v
-  let n = isNegative (v - value)
-  let c = v >= value
-  update (updateFlag Z z) flags
-  update (updateFlag N n) flags
-  update (updateFlag C c) flags
-
-setFlag :: State -> Flag -> Eff ()
-setFlag s f = writeFlag s f True
-
-clearFlag :: State -> Flag -> Eff ()
-clearFlag s f = writeFlag s f False
+  let z = val == v
+  let n = isNegative (v - val)
+  let c = v >= val
+  writeFlag s Z z
+  writeFlag s N n
+  writeFlag s C c
 
 readFlag :: State -> Flag -> Eff Bool
 readFlag State{flags} flag = do
   flags <- read flags
   pure $ testFlag flags flag
 
+updateZN :: State -> U8 -> Eff ()
+updateZN s val = do
+  writeFlag s Z (val == 0)
+  writeFlag s N (isNegative val)
+
 writeFlag :: State -> Flag -> Bool -> Eff ()
 writeFlag State{flags} flag bool = do
-  flagsV <- read flags
-  write flags $ updateFlag flag bool flagsV
-
-updateZN :: State -> U8 -> Eff ()
-updateZN State{flags} v = do
-  update (updateFlag Z (v == 0)) flags
-  update (updateFlag N (isNegative v)) flags
+  update (updateFlag flag bool) flags
 
 branchFlagSet :: State -> Flag -> Addr -> Eff ()
 branchFlagSet State{ip,flags} flag addr = do
