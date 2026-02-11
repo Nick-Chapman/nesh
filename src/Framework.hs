@@ -101,7 +101,7 @@ runEffect eff0 = loop s0 eff0 k0
     timeToStop :: State -> Bool
     timeToStop State{cycles} = cycles >= maxCycles
 
-    maxCycles = 400 -- TODO: hack
+    maxCycles = 3000 -- TODO: hack
 
 putOut :: String -> IO ()
 putOut s = do

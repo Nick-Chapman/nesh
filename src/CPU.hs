@@ -1,7 +1,7 @@
 module CPU (cpu) where
 
 import Control.Monad (when)
-import Data.Bits (testBit, (.&.),setBit,clearBit)
+import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
 import Framework (Eff(..),Ref(..),write,read)
 import PRG qualified (ROM,read)
@@ -263,7 +263,7 @@ executeOpcode s opcode = do
   let (instruction,cycles,mode) = decode opcode
   let withArg = executeWithArg s instruction
   (bytes,strArg,eff) <- doMode s mode withArg
-  logCpuInstruction s (opcode:bytes) instruction strArg
+  logCpuInstruction s (opcode:bytes) instruction mode strArg
   let n = 1 + length bytes
   advanceIP n s
   eff
@@ -291,11 +291,12 @@ advanceIP n State{ip} =
 ----------------------------------------------------------------------
 -- trace instruction
 
-logCpuInstruction :: State -> [U8] -> Instruction -> String -> Eff ()
-logCpuInstruction s@State{ip} bytes instruction strArg = do
+logCpuInstruction :: State -> [U8] -> Instruction -> Mode -> String -> Eff ()
+logCpuInstruction s@State{ip} bytes instruction mode strArg = do
   pc <- read ip
   let bytesS = intercalate " " (map (printf "%02X") bytes)
-  let a = printf "%s  %s %s" (ljust 8 bytesS) (show instruction) strArg
+  let modeA = if mode == Accumulator then " A" else ""
+  let a = printf "%s  %s%s %s" (ljust 8 bytesS) (show instruction) modeA strArg
   b <- seeState s
   Log $ printf "%04X  %s%s" pc (ljust 42 a) b
 
@@ -319,7 +320,7 @@ data Mode
     | IndirectIndexedY
     | Accumulator
     | Indirect
-    deriving Show
+    deriving (Eq,Show)
 
 fetchArgs :: State -> Mode -> Eff ([U8],String,Addr)
 fetchArgs State{ip,bus} = \case
@@ -347,6 +348,16 @@ fetchArgs State{ip,bus} = \case
     let addr = makeAddr HL { hi = 0, lo }
     pure (bytes, view, addr)
 
+{-
+  ZeroPageX -> do
+    pc <- read ip
+    b1 <- read (bus (pc+1))
+    let bytes = [b1]
+    let view = printf "$%02X, x" b1
+    x <- read x
+    let addr = makeAddr HL { hi = 0, lo = b1 + x}
+    pure (bytes, view, addr)
+-}
   Relative -> do
     pc <- read ip
     off <- read (bus (pc+1))
@@ -367,22 +378,51 @@ data WithArg
   | Arg2 (Addr -> Eff ())
 
 executeWithArg :: State -> Instruction -> WithArg
-executeWithArg s@State{bus,ip,flags,x,y,a} = \case
+executeWithArg s@State{ip,flags,x,y,a,sp} = \case
 
-  --INX -> Arg0 $ do increment x
-  --INY -> undefined
+  INX -> Arg0 $ do modify s x (+1)
+  INY -> Arg0 $ do modify s y (+1)
   --INC -> undefined
-  --DEX -> undefined
-  --DEY -> undefined
+  DEX -> Arg0 $ do modify s x (subtract 1)
+  DEY -> Arg0 $ do modify s y (subtract 1)
   --DEC -> undefined
 
-  --ADC -> undefined
-  --SBC -> undefined
+  ADC -> Arg1 $ \value -> adc s value
+  SBC -> Arg1 $ \value -> adc s (255 - value)
 
-  --ASL -> undefined
-  --LSR -> undefined
-  --ROL -> undefined
-  --ROR -> undefined
+  LSR -> Arg0 $ do
+    old <- read a
+    let new = old `shiftR` 1
+    let c' = old `testBit` 0
+    writeFlag s C c'
+    write a new
+    updateZN s new
+
+  ROR -> Arg0 $ do
+    old <- read a
+    c <- readFlag s C
+    let new = old `shiftR` 1 .|. if c then 128 else 0
+    let c' = old `testBit` 0
+    writeFlag s C c'
+    write a new
+    updateZN s new
+
+  ASL -> Arg0 $ do
+    old <- read a
+    let new = old `shiftL` 1
+    let c' = old `testBit` 7
+    writeFlag s C c'
+    write a new
+    updateZN s new
+
+  ROL -> Arg0 $ do
+    old <- read a
+    c <- readFlag s C
+    let new = old `shiftL` 1 .|. if c then 1 else 0
+    let c' = old `testBit` 7
+    writeFlag s C c'
+    write a new
+    updateZN s new
 
   CLC -> Arg0 $ do clearFlag s C
   CLD -> Arg0 $ do clearFlag s D
@@ -393,26 +433,20 @@ executeWithArg s@State{bus,ip,flags,x,y,a} = \case
   SED -> Arg0 $ do setFlag s D
   SEI -> Arg0 $ do setFlag s I
 
-  LDA -> Arg1 $ \v -> do
-    load s a v
-
+  LDA -> Arg1 $ \v -> do load s a v
   LDX -> Arg1 $ \v -> do load s x v
   LDY -> Arg1 $ \v -> do load s y v
 
-  STA -> Arg2 $ \addr -> do
-    read a >>= write (bus addr)
-
-  STX -> Arg2 $ \addr -> do
-    read x >>= write (bus addr)
-
+  STA -> Arg2 $ \addr -> do store s a addr
+  STX -> Arg2 $ \addr -> do store s x addr
   --STY -> undefined
 
-  TAX -> Arg0 $ transfer a x
-  --TAY -> undefined
-  --TXA -> undefined
-  --TYA -> undefined
-  --TSX -> undefined
-  --TXS -> undefined
+  TAX -> Arg0 $ transfer s a x
+  TAY -> Arg0 $ transfer s a y
+  TXA -> Arg0 $ transfer s x a
+  TYA -> Arg0 $ transfer s y a
+  TSX -> Arg0 $ transfer s sp x
+  TXS -> Arg0 $ read x >>= write sp -- no update Z/N
 
   PHA -> Arg0 $ do
     a <- read a
@@ -434,19 +468,19 @@ executeWithArg s@State{bus,ip,flags,x,y,a} = \case
   BIT -> Arg1 $ \value -> do
     a <- read a
     let z = (value .&. a) == 0
-    let n = value `testBit` 7
+    let n = isNegative value
     let v = value `testBit` 6
     update (updateFlag Z z) flags
     update (updateFlag N n) flags
     update (updateFlag V v) flags
 
   CMP -> Arg1 $ \value -> compare s a value
-  --CPX -> undefined
-  --CPY -> undefined
+  CPX -> Arg1 $ \value -> compare s x value
+  CPY -> Arg1 $ \value -> compare s y value
 
   AND -> Arg1 $ binop s (.&.)
-  --ORA -> undefined
-  --EOR -> undefined
+  ORA -> Arg1 $ binop s (.|.)
+  EOR -> Arg1 $ binop s xor
 
   BCS -> Arg2 $ \addr -> do branchFlagSet s C addr
   BEQ -> Arg2 $ \addr -> do branchFlagSet s Z addr
@@ -470,17 +504,36 @@ executeWithArg s@State{bus,ip,flags,x,y,a} = \case
     pc <- pop16 s
     write ip (pc+1)
 
-  --RTI -> undefined
+  RTI -> Arg0 $ do
+    v <- pop s
+    write flags (setBit (clearBit v 4) 5)
+    pc <- pop16 s
+    write ip pc
 
   NOP -> Arg0 $
     pure ()
 
   --BRK -> undefined
 
-  i ->
-    error $ printf "Unimplemented instruction: %s" (show i)
+  i -> error $ printf "Unimplemented instruction: %s" (show i)
 
   where
+
+adc :: State -> U8 -> Eff ()
+adc s@State{a,flags} val = do
+  flagsV <- read flags
+  oldValue <- read a
+  let c = testFlag flagsV C
+  let result :: Int = fromIntegral oldValue + fromIntegral val + if c then 1 else 0
+  let newValue :: U8 = fromIntegral result
+  write a newValue
+  let cout = (result >= 256)
+  let vout =
+        (isPositive oldValue && isPositive val && isNegative newValue) ||
+        (isNegative oldValue && isNegative val && isPositive newValue)
+  update (updateFlag V vout) flags
+  update (updateFlag C cout) flags
+  updateZN s newValue
 
 binop :: State -> (U8 -> U8 -> U8) -> U8 -> Eff ()
 binop s@State{a} f value = do
@@ -489,26 +542,43 @@ binop s@State{a} f value = do
   write a new
   updateZN s new
 
+modify :: State -> Ref U8 -> (U8 -> U8) -> Eff ()
+modify s r f = do
+  old <- read r
+  let new = f old
+  write r new
+  updateZN s new
+
 compare :: State -> Ref U8 -> U8 -> Eff ()
 compare State{flags} r value = do
   v <- read r
   let z = value == v
-  let n = value `testBit` 7
+  let n = isNegative (v - value)
   let c = v >= value
   update (updateFlag Z z) flags
   update (updateFlag N n) flags
   update (updateFlag C c) flags
 
 setFlag :: State -> Flag -> Eff ()
-setFlag State{flags} flag = update (updateFlag flag True) flags
+setFlag s f = writeFlag s f True
 
 clearFlag :: State -> Flag -> Eff ()
-clearFlag State{flags} flag = update (updateFlag flag False) flags
+clearFlag s f = writeFlag s f False
+
+readFlag :: State -> Flag -> Eff Bool
+readFlag State{flags} flag = do
+  flags <- read flags
+  pure $ testFlag flags flag
+
+writeFlag :: State -> Flag -> Bool -> Eff ()
+writeFlag State{flags} flag bool = do
+  flagsV <- read flags
+  write flags $ updateFlag flag bool flagsV
 
 updateZN :: State -> U8 -> Eff ()
 updateZN State{flags} v = do
   update (updateFlag Z (v == 0)) flags
-  update (updateFlag N (v `testBit` 7)) flags
+  update (updateFlag N (isNegative v)) flags
 
 branchFlagSet :: State -> Flag -> Addr -> Eff ()
 branchFlagSet State{ip,flags} flag addr = do
@@ -527,9 +597,16 @@ load s r v = do
   write r v
   updateZN s v
 
-transfer :: Ref U8 -> Ref U8 -> Eff ()
-transfer from to = do
-  read from >>= write to
+store :: State -> Ref U8 -> Addr -> Eff ()
+store State{bus} r addr = do
+  v <- read r
+  write (bus addr) v
+
+transfer :: State -> Ref U8 -> Ref U8 -> Eff ()
+transfer s from to = do
+  v <- read from
+  write to v
+  updateZN s v
 
 push16 :: State -> Addr -> Eff ()
 push16 s a = do
@@ -567,3 +644,9 @@ update :: (a -> a) -> Ref a -> Eff ()
 update f r = do
   v <- read r
   write r (f v)
+
+isNegative :: U8 -> Bool
+isNegative v = v `testBit` 7
+
+isPositive :: U8 -> Bool
+isPositive = not . isNegative
