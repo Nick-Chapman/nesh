@@ -42,65 +42,69 @@ executeOpcode :: Config -> State -> U8 -> Eff Int
 executeOpcode Config{trace} s@State{ip} opcode = do
   let (instruction,cycles,mode) = decode opcode
   let withArg = executeWithArg s instruction
-  (addr,eff) <- doMode s mode withArg
+  (penalty,addr,eff) <- doMode s instruction mode withArg
   when (trace) $ logCpuInstruction s instruction mode addr
   let n = 1 + sizeMode mode
   update (+ fromIntegral n) ip
   eff
-  pure cycles
+  pure (cycles + if penalty then 1 else 0)
 
-doMode :: State -> Mode -> WithArg -> Eff (Addr, Eff ())
-doMode s@State{bus,a=accumulator} mode = \case
-  Arg0 eff -> pure (undefined,eff)
+doMode :: State -> Instruction -> Mode -> WithArg -> Eff (Bool, Addr, Eff ())
+doMode s@State{bus,a=accumulator} instruction mode = \case
+  Arg0 eff -> pure (False,undefined,eff)
   Arg1 f -> do
-    addr <- fetchArgs s mode
+    (penalty,addr) <- fetchArgs s instruction mode
     let
       eff = do
         byte <- read (bus addr)
         f byte
-    pure (addr,eff)
+    pure (penalty,addr,eff)
   Arg2 f -> do
-    addr <- fetchArgs s mode
+    (penalty,addr) <- fetchArgs s instruction mode
     let eff = f addr
-    pure (addr,eff)
+    pure (penalty,addr,eff)
   ArgR f -> do
     case mode of
       Accumulator -> do
         let eff = f accumulator
-        pure (undefined,eff)
+        pure (False,undefined,eff)
       _ -> do
-        addr <- fetchArgs s mode
+        (penalty,addr) <- fetchArgs s instruction mode
         let eff = f (bus addr)
-        pure (addr,eff)
+        pure (penalty,addr,eff)
 
 
-fetchArgs :: State -> Mode -> Eff Addr
-fetchArgs State{ip,bus,x} = \case
+fetchArgs :: State -> Instruction -> Mode -> Eff (Bool,Addr)
+fetchArgs State{ip,bus,x,y} instruction = \case
 
   Immediate -> do
     pc <- read ip
     let addr = pc + 1  -- TODO: weird?
-    pure addr
+    let penalty = False
+    pure (penalty,addr)
 
   Absolute -> do
     pc <- read ip
     lo <- read (bus (pc+1))
     hi <- read (bus (pc+2))
     let addr = makeAddr HL {hi,lo}
-    pure addr
+    let penalty = False
+    pure (penalty,addr)
 
   ZeroPage -> do
     pc <- read ip
     lo <- read (bus (pc+1))
     let addr = makeAddr HL { hi = 0, lo }
-    pure addr
+    let penalty = False
+    pure (penalty,addr)
 
   Relative -> do
     pc <- read ip
     off <- read (bus (pc+1))
     let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
     let addr = 2 + pc + fromIntegral dist
-    pure addr
+    let penalty = False
+    pure (penalty,addr)
 
   IndexedIndirectX -> do
     pc <- read ip
@@ -111,13 +115,33 @@ fetchArgs State{ip,bus,x} = \case
     lo <- read (bus first)
     hi <- read (bus second)
     let addr = makeAddr HL { hi, lo }
-    pure addr
+    let penalty = False
+    pure (penalty,addr)
+
+  IndirectIndexedY -> do
+    pc <- read ip
+    zeroPageAddress <- read (bus (pc+1))
+    let first = makeAddr HL { hi = 0, lo = zeroPageAddress }
+    let second = makeAddr HL { hi = 0, lo = zeroPageAddress + 1 }
+    hi <- read (bus second)
+    lo <- read (bus first)
+    let baseAddr = makeAddr HL { hi, lo }
+    y <- read y
+    let addr = baseAddr + fromIntegral y
+    let HL {hi = hi'} = splitAddr addr
+    let pageCross = hi /= hi'
+    let penalty = (hasPageCrossPenalty instruction && pageCross)
+    pure (penalty,addr)
 
   mode@Accumulator -> do
     error $ printf "fetchArgs: unsupported addressing mode: %s" (show mode)
 
   mode ->
     error $ printf "Unimplemented addressing mode: %s" (show mode)
+
+hasPageCrossPenalty :: Instruction -> Bool
+hasPageCrossPenalty = \case
+  _ -> True
 
 ----------------------------------------------------------------------
 -- trace instruction
@@ -146,6 +170,7 @@ seeArgs = \case
   (Relative,[_],addr) -> printf "$%04X" addr
 
   (IndexedIndirectX,[b1],_) -> printf "($%02X,X)" b1
+  (IndirectIndexedY,[b1],_) -> printf "($%02X),Y" b1
 
   (mode,bytes,_) ->
     error $ printf "seeArgs:%s/%s" (show mode) (show bytes)
@@ -242,7 +267,7 @@ sizeMode = \case
   ZeroPageX -> undefined
   ZeroPageY -> undefined
   IndexedIndirectX -> 1
-  IndirectIndexedY -> undefined
+  IndirectIndexedY -> 1
   Accumulator -> 0
   Indirect -> undefined
 

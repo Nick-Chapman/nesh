@@ -8,8 +8,8 @@ nestest.size: nestest.out
 nestest.expected: nestest.golden nestest.size
   cat $in | head -$$(cat nestest.size) > $out
 
-nestest.actual: nestest.out nestest.size # TODO jenga $in1 $In2
+nestest.actual: nestest.out nestest.size # TODO jenga $in1 $in2
   cat nestest.out | head -$$(cat nestest.size) > $out
 
 nestest.out : ../src/emu.exe nestest.nes
-  ./$in nestest.nes --trace-cpu --stop-at 8700 > $out || true
+  ./$in nestest.nes --trace-cpu --stop-at 9500 > $out || true
