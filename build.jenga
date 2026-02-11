@@ -1,3 +1,9 @@
 
-*top : src/emu.exe test/nestest.nes
-  ./$in
+*dev : src/emu.exe test/nestest.nes
+  ./$in nestest.nes --trace-cpu --stop-at 10000
+
+*dk : src/emu.exe ~/nesrom/dk.nes
+  ./$in dk.nes --trace-cpu --stop-at 10000
+
+*smb : src/emu.exe ~/nesrom/smb.nes
+  ./$in smb.nes --trace-cpu --stop-at 10000

@@ -1,4 +1,4 @@
-module CPU (cpu) where
+module CPU (Config(..),cpu) where
 
 import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
@@ -8,6 +8,46 @@ import PRG qualified (ROM,read)
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr,Flag(..),testFlag,updateFlag)
+
+----------------------------------------------------------------------
+-- cpu
+
+data Config = Config { trace :: Bool, stop_at :: Maybe Int }
+
+cpu :: Config -> PRG.ROM -> Eff ()
+cpu config prg = do
+  bus <- makeCpuBus prg
+  s <- mkState bus
+  Advance 7 -- reset sequence
+  loop 0 s
+  where
+    loop :: Int -> State -> Eff ()
+    loop i s@State{ip,bus} = do
+      pc <- read ip
+      opcode <- read (bus pc)
+      cycles <- executeOpcode config s opcode
+      Advance cycles
+      maybeHalt config
+      loop (i+1) s
+
+maybeHalt :: Config -> Eff ()
+maybeHalt Config{stop_at} = do
+  case stop_at of
+    Nothing -> pure ()
+    Just max -> do
+      cycles <- Cycles
+      when (cycles > max) Halt
+
+executeOpcode :: Config -> State -> U8 -> Eff Int
+executeOpcode Config{trace} s opcode = do
+  let (instruction,cycles,mode) = decode opcode
+  let withArg = executeWithArg s instruction
+  (bytes,strArg,eff) <- doMode s mode withArg
+  when (trace) $ logCpuInstruction s (opcode:bytes) instruction mode strArg
+  let n = 1 + length bytes
+  advanceIP n s
+  eff
+  pure cycles
 
 ----------------------------------------------------------------------
 -- instructions
@@ -241,33 +281,7 @@ seeState State{a,x,y,flags,sp} = do
   pure mes
 
 ----------------------------------------------------------------------
--- cpu
-
-cpu :: PRG.ROM -> Eff ()
-cpu prg = do
-  bus <- makeCpuBus prg
-  s <- mkState bus
-  Advance 7 -- reset sequence
-  loop 0 s
-  where
-    loop :: Int -> State -> Eff ()
-    loop i s@State{ip,bus} = do
-      pc <- read ip
-      opcode <- read (bus pc)
-      cycles <- executeOpcode s opcode
-      Advance cycles
-      loop (i+1) s
-
-executeOpcode :: State -> U8 -> Eff Int
-executeOpcode s opcode = do
-  let (instruction,cycles,mode) = decode opcode
-  let withArg = executeWithArg s instruction
-  (bytes,strArg,eff) <- doMode s mode withArg
-  logCpuInstruction s (opcode:bytes) instruction mode strArg
-  let n = 1 + length bytes
-  advanceIP n s
-  eff
-  pure cycles
+-- execute
 
 doMode :: State -> Mode -> WithArg -> Eff ([U8], String, Eff ())
 doMode s@State{bus} mode = \case

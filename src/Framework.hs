@@ -33,6 +33,7 @@ instance Monad Eff where (>>=) = Bind
 data Eff a where
   Ret :: a -> Eff a
   Bind :: Eff a -> (a -> Eff b) -> Eff b
+  Halt :: Eff ()
   Log :: String -> Eff ()
   IO :: IO a -> Eff a
   DefineRegister :: a -> Eff (Ref a)
@@ -51,6 +52,8 @@ runEffect eff0 = loop s0 eff0 k0
     loop s@State{cycles=now} eff k = case eff of
       Ret a -> k a s
       Bind m f -> loop s m $ \a s -> loop s (f a) k
+
+      Halt -> pure ()
 
       Cycles -> do
         let State{cycles} = s
@@ -95,13 +98,7 @@ runEffect eff0 = loop s0 eff0 k0
         firstJob:restJobs -> do
           let Job {resumeTime,kunit} = firstJob
           let s3 = s1 { cycles = resumeTime, jobs = restJobs }
-          if timeToStop s3 then pure () else do
-            kunit s3
-
-    timeToStop :: State -> Bool
-    timeToStop State{cycles} = cycles > maxCycles
-
-    maxCycles = 2545 -- TODO: hack
+          kunit s3
 
 putOut :: String -> IO ()
 putOut s = do
