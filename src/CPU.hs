@@ -19,7 +19,7 @@ data Config = Config
   }
 
 cpu :: Config -> PRG.ROM -> Eff ()
-cpu config prg = do
+cpu config@Config{trace} prg = do
   bus <- makeCpuBus prg
   s <- mkState bus
   initialize config s
@@ -29,11 +29,21 @@ cpu config prg = do
     loop s@State{ip,bus} = do
       maybeHalt config s
       pc <- read ip
+
+      -- fetch/decode
       opcode <- read (bus pc)
-      cyc1 <- executeOpcode config s opcode
-      cyc2 <- collectExtraCycles s
-      let cycles = cyc1 + cyc2
-      advanceCPU s cycles
+      let (instruction,baseCycles,mode) = decode opcode
+      let withArg = executeInstruction s instruction
+      (addr,eff) <- doMode s instruction mode withArg
+
+      -- execute
+      when (trace) $ logCpuInstruction s instruction mode addr
+      update (+ (1 + sizeMode mode)) ip
+      eff
+
+      -- advance simulation
+      extraCycles <- collectExtraCycles s
+      advanceCPU s (baseCycles + extraCycles)
       loop s
 
 initialize :: Config -> State -> Eff ()
@@ -60,17 +70,6 @@ maybeHalt Config{stop_at} State{cyc} = do
       cyc <- read cyc
       when (cyc > max) Halt
 
-executeOpcode :: Config -> State -> U8 -> Eff Int
-executeOpcode Config{trace} s@State{ip} opcode = do
-  let (instruction,cycles,mode) = decode opcode
-  let withArg = executeInstruction s instruction
-  (addr,eff) <- doMode s instruction mode withArg
-  when (trace) $ logCpuInstruction s instruction mode addr
-  let n = 1 + sizeMode mode
-  update (+ fromIntegral n) ip
-  eff
-  pure cycles
-
 ----------------------------------------------------------------------
 -- addressing modes
 
@@ -90,7 +89,7 @@ data Mode
   | Indirect
   deriving (Eq,Show)
 
-sizeMode :: Mode -> Int
+sizeMode :: Mode -> Addr
 sizeMode = \case
   Immediate -> 1
   ZeroPage -> 1
