@@ -10,6 +10,7 @@ import Prelude qualified
 import System.Environment (getArgs)
 import Text.Printf (printf)
 import Types (Addr)
+import Bus (makeCpuBus)
 
 main :: IO ()
 main = do
@@ -29,10 +30,18 @@ prgOfNesFile NesFile{prgs} =
 
 system :: Config -> PRG.ROM -> Eff ()
 system Config{stop_at,trace_cpu,init_pc} prg = do
-  let cpu = CPU.cpu CPU.Config { trace = trace_cpu
-                               , stop_at = stop_at
-                               , init_pc = init_pc
-                               } prg
+
+  let
+    cpuConfig = CPU.Config
+      { trace = trace_cpu
+      , stop_at = stop_at
+      , init_pc = init_pc
+      }
+
+  bus <- makeCpuBus prg
+
+  let cpu = CPU.cpu cpuConfig bus
+
   Parallel cpu ppu
 
 data Config = Config

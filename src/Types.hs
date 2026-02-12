@@ -3,7 +3,7 @@ module Types
   ( U8
   , HL(..)
   , Addr, makeAddr, splitAddr
-  , Flag(..), testFlag,updateFlag
+  , Flag(..), testFlag,updateFlag -- TODO: move to CPU
   ) where
 
 import Data.Word (Word8,Word16)

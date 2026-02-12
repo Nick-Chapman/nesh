@@ -75,7 +75,7 @@ runEffect eff0 = loop s0 eff0 k0
           f addr = do
             let onRead = IO (readIOArray mem addr)
             let onWrite v = IO (writeIOArray mem addr v)
-            Ref {onRead,onWrite}
+            Ref {onRead,onWrite} -- TODO: optimization(?) pre-build each Ref
         k f s
 
       Parallel m1 m2 -> do

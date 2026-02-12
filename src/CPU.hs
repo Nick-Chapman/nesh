@@ -4,7 +4,6 @@ import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
 import Framework (Eff(..),Ref(..),write,read)
-import PRG qualified (ROM,read)
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr,Flag(..),testFlag,updateFlag)
@@ -18,9 +17,10 @@ data Config = Config
   , init_pc :: Maybe Addr
   }
 
-cpu :: Config -> PRG.ROM -> Eff ()
-cpu config@Config{trace} prg = do
-  bus <- makeCpuBus prg
+type Bus = (Addr -> Ref U8)
+
+cpu :: Config -> Bus -> Eff ()
+cpu config@Config{trace} bus = do
   s <- mkState bus
   initialize config s
   loop s
@@ -294,30 +294,6 @@ seeArgs = \case
   (IndirectIndexedY,[lo],_) -> printf "($%02X),Y" lo
 
   (mode,bytes,_) -> error $ printf "seeArgs:%s/%s" (show mode) (show bytes)
-
-----------------------------------------------------------------------
--- CpuBus
-
-type Bus = (Addr -> Ref U8)
-
-makeCpuBus :: PRG.ROM -> Eff Bus
-makeCpuBus prg = do
-  wram <- DefineMemory 2048
-  pure $ \a -> do
-    if
-      | a <= 0x07ff -> wram (fromIntegral a) -- TODO (mask for mirrors)
-      | a >= 0xc000 && a <= 0xffff -> readPRG prg (a - 0xC000)
-      | otherwise ->
-        error $ printf "makeCpuBus: address = %04X" a
-
-readPRG :: PRG.ROM -> Addr -> Ref U8
-readPRG prg a = readonly (PRG.read prg a)
-  where
-    readonly :: U8 -> Ref U8
-    readonly byte =
-      Ref { onRead = pure byte
-          , onWrite = \v -> error (show ("readonly/onWrite",a,v))
-          }
 
 ----------------------------------------------------------------------
 -- State
