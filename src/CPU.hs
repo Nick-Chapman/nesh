@@ -6,7 +6,7 @@ import Data.List (intercalate)
 import Framework (Eff(..),Ref(..),write,read)
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
-import Types (U8,Addr,HL(..),makeAddr,splitAddr,Flag(..),testFlag,updateFlag)
+import Types (U8,Addr,HL(..),makeAddr,splitAddr)
 
 ----------------------------------------------------------------------
 -- cpu
@@ -339,6 +339,27 @@ seeState State{a,x,y,flags,sp,cyc} = do
       printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"
        a x y flags sp ppuY ppuX cyc
   pure mes
+
+----------------------------------------------------------------------
+-- Flags (bits of flags register)
+
+data Flag = C | Z | I | D | V | N
+
+flagBitNum :: Flag -> Int
+flagBitNum = \case
+  C -> 0
+  Z -> 1
+  I -> 2
+  D -> 3
+  -- 4,5
+  V -> 6
+  N -> 7
+
+testFlag :: U8 -> Flag -> Bool
+testFlag v flag  = v `testBit` (flagBitNum flag)
+
+updateFlag :: Flag -> Bool -> U8 -> U8
+updateFlag flag bool v = (if bool then setBit else clearBit) v (flagBitNum flag)
 
 ----------------------------------------------------------------------
 -- track cpu cycles
