@@ -23,23 +23,25 @@ cpu config prg = do
   bus <- makeCpuBus prg
   s <- mkState bus
   initialize config s
-  loop 0 s
+  loop s
   where
-    loop :: Int -> State -> Eff ()
-    loop i s@State{ip,bus} = do
+    loop :: State -> Eff ()
+    loop s@State{ip,bus} = do
+      maybeHalt config s
       pc <- read ip
       opcode <- read (bus pc)
-      cycles <- executeOpcode config s opcode
-      Advance cycles
-      maybeHalt config
-      loop (i+1) s
+      cyc1 <- executeOpcode config s opcode
+      cyc2 <- collectExtraCycles s
+      let cycles = cyc1 + cyc2
+      advanceCPU s cycles
+      loop s
 
 initialize :: Config -> State -> Eff ()
 initialize Config{init_pc} s@State{ip} =
   case init_pc of
     Just addr -> do
-      write ip addr  -- used by nestest
-      Advance 7
+      write ip addr  -- used by jenga test-nestest
+      advanceCPU s 7
     Nothing ->
       jumpResetVector s
 
@@ -50,13 +52,13 @@ jumpResetVector State{bus,ip} = do
   let addr = makeAddr HL { lo, hi }
   write ip addr
 
-maybeHalt :: Config -> Eff ()
-maybeHalt Config{stop_at} = do
+maybeHalt :: Config -> State -> Eff ()
+maybeHalt Config{stop_at} State{cyc} = do
   case stop_at of
     Nothing -> pure ()
     Just max -> do
-      cycles <- Cycles
-      when (cycles > max) Halt
+      cyc <- read cyc
+      when (cyc > max) Halt
 
 executeOpcode :: Config -> State -> U8 -> Eff Int
 executeOpcode Config{trace} s@State{ip} opcode = do
@@ -68,7 +70,6 @@ executeOpcode Config{trace} s@State{ip} opcode = do
   update (+ fromIntegral n) ip
   eff
   pure (cycles + if penalty then 1 else 0)
-
 
 ----------------------------------------------------------------------
 -- addressing modes
@@ -331,6 +332,8 @@ data State = State
   , flags :: Ref U8
   , sp :: Ref U8
   , bus :: Addr -> Ref U8
+  , extraCycles :: Ref Int -- for the current instruction. reset to 0 when collected
+  , cyc :: Ref Int -- total cpu cycles executed
   }
 
 mkState :: Bus -> Eff State
@@ -341,16 +344,18 @@ mkState bus = do
   y <- DefineRegister 0
   flags <- DefineRegister 0x24
   sp <- DefineRegister 0xfd
-  pure $ State { ip, a, x, y, flags, sp, bus }
+  extraCycles <- DefineRegister 0
+  cyc <- DefineRegister 0
+  pure $ State { ip, a, x, y, flags, sp, bus, extraCycles, cyc }
 
 seeState :: State -> Eff String
-seeState State{a,x,y,flags,sp} = do
+seeState State{a,x,y,flags,sp,cyc} = do
   a <- read a
   x <- read x
   y <- read y
   flags <- read flags
   sp <- read sp
-  cyc <- Cycles
+  cyc <- read cyc
   let ppuCYC = cyc*3
   let ppuCyclesPerScanLine = 341
   let ppuX :: Int = ppuCYC `mod` ppuCyclesPerScanLine
@@ -360,6 +365,24 @@ seeState State{a,x,y,flags,sp} = do
       printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"
        a x y flags sp ppuY ppuX cyc
   pure mes
+
+----------------------------------------------------------------------
+-- track cpu cycles
+
+addExtraCycle :: State -> Eff ()
+addExtraCycle State{extraCycles} = do
+  update (+1) extraCycles
+
+collectExtraCycles :: State -> Eff Int
+collectExtraCycles State{extraCycles} = do
+  n <- read extraCycles
+  write extraCycles 0
+  pure n
+
+advanceCPU :: State -> Int -> Eff ()
+advanceCPU State{cyc} n = do
+  update (+n) cyc
+  AdvancePPU (3*n) -- 3 ppu cycles to 1 cpu cycle
 
 ----------------------------------------------------------------------
 -- instructions
@@ -577,15 +600,15 @@ writeFlag State{flags} flag bool = do
   update (updateFlag flag bool) flags
 
 branchFlagSet :: State -> Flag -> Addr -> Eff ()
-branchFlagSet State{ip,flags} flag addr = do
+branchFlagSet s@State{ip,flags} flag addr = do
   flags <- read flags
-  let eff = do write ip addr; Advance 1 -- extra cycle
+  let eff = do write ip addr; addExtraCycle s
   when (testFlag flags flag) eff
 
 branchFlagClear :: State -> Flag -> Addr -> Eff ()
-branchFlagClear State{ip,flags} flag addr = do
+branchFlagClear s@State{ip,flags} flag addr = do
   flags <- read flags
-  let eff = do write ip addr; Advance 1 -- extra cycle
+  let eff = do write ip addr; addExtraCycle s
   when (not $ testFlag flags flag) eff
 
 load :: State -> Ref U8 -> U8 -> Eff ()

@@ -39,8 +39,7 @@ data Eff a where
   DefineRegister :: a -> Eff (Ref a)
   DefineMemory :: Int -> Eff (Int -> Ref U8)
   Parallel :: Eff () -> Eff () -> Eff ()
-  Advance :: Int -> Eff ()
-  Cycles :: Eff Int
+  AdvancePPU :: Int -> Eff () -- we synchronise everything on PPU ticks
 
 runEffect :: Eff () -> IO ()
 runEffect eff0 = loop s0 eff0 k0
@@ -54,10 +53,6 @@ runEffect eff0 = loop s0 eff0 k0
       Bind m f -> loop s m $ \a s -> loop s (f a) k
 
       Halt -> pure ()
-
-      Cycles -> do
-        let State{cycles} = s
-        k cycles s
 
       Log message -> do
         putOut message
@@ -86,7 +81,7 @@ runEffect eff0 = loop s0 eff0 k0
       Parallel m1 m2 -> do
         let j2 = Job { resumeTime = now, kunit = \s -> loop s m2 k0 }
         loop (pushJob s j2) m1 k
-      Advance n -> do
+      AdvancePPU n -> do
         let jobMe = Job { resumeTime = now+n, kunit = k () }
         resumeNext (pushJob s jobMe)
 
