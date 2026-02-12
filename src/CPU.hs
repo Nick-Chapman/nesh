@@ -351,10 +351,14 @@ seeState State{a,x,y,flags,sp} = do
   flags <- read flags
   sp <- read sp
   cyc <- Cycles
+  let ppuCYC = cyc*3
+  let ppuCyclesPerScanLine = 341
+  let ppuX :: Int = ppuCYC `mod` ppuCyclesPerScanLine
+  let ppuY :: Int = ppuCYC `div` ppuCyclesPerScanLine
   let
     mes :: String =
-      printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X  CYC:%d"
-       a x y flags sp cyc
+      printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"
+       a x y flags sp ppuY ppuX cyc
   pure mes
 
 ----------------------------------------------------------------------

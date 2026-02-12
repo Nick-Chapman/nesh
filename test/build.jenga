@@ -1,5 +1,5 @@
 
-*test: nestest.expected nestest.actual
+*test-nestest: nestest.expected nestest.actual
   git diff --word-diff=color $ins
 
 nestest.size: nestest.out
