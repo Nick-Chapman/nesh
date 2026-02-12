@@ -64,12 +64,12 @@ executeOpcode :: Config -> State -> U8 -> Eff Int
 executeOpcode Config{trace} s@State{ip} opcode = do
   let (instruction,cycles,mode) = decode opcode
   let withArg = executeInstruction s instruction
-  (penalty,addr,eff) <- doMode s instruction mode withArg
+  (addr,eff) <- doMode s instruction mode withArg
   when (trace) $ logCpuInstruction s instruction mode addr
   let n = 1 + sizeMode mode
   update (+ fromIntegral n) ip
   eff
-  pure (cycles + if penalty then 1 else 0)
+  pure cycles
 
 ----------------------------------------------------------------------
 -- addressing modes
@@ -106,42 +106,41 @@ sizeMode = \case
   Accumulator -> 0
   Indirect -> 2
 
-doMode :: State -> Instruction -> Mode -> WithArg -> Eff (Bool, Addr, Eff ())
+doMode :: State -> Instruction -> Mode -> WithArg -> Eff (Addr, Eff ())
 doMode s@State{bus,ip,a=accumulator} instruction mode = \case
-  Arg0 eff -> pure (False,undefined,eff)
+  Arg0 eff -> pure (undefined,eff)
   Arg1 f -> do
     case mode of
       Immediate -> do
         pc <- read ip
-        let penalty = False
         let
           eff = do
             byte <- read (bus (pc+1))
             f byte
-        pure (penalty,undefined,eff)
+        pure (undefined,eff)
       _ -> do
-        (penalty,addr) <- fetchArgs s instruction mode
+        addr <- fetchArgs s instruction mode
         let
           eff = do
             byte <- read (bus addr)
             f byte
-        pure (penalty,addr,eff)
+        pure (addr,eff)
   Arg2 f -> do
-    (penalty,addr) <- fetchArgs s instruction mode
+    (addr) <- fetchArgs s instruction mode
     let eff = f addr
-    pure (penalty,addr,eff)
+    pure (addr,eff)
   ArgR f -> do
     case mode of
       Accumulator -> do
         let eff = f accumulator
-        pure (False,undefined,eff)
+        pure (undefined,eff)
       _ -> do
-        (penalty,addr) <- fetchArgs s instruction mode
+        addr <- fetchArgs s instruction mode
         let eff = f (bus addr)
-        pure (penalty,addr,eff)
+        pure (addr,eff)
 
 
-fetchArgs :: State -> Instruction -> Mode -> Eff (Bool,Addr)
+fetchArgs :: State -> Instruction -> Mode -> Eff Addr
 fetchArgs s@State{ip,x,y} instruction mode = case mode of
 
   Accumulator -> error $ printf "fetchArgs/Accumulator"
@@ -150,74 +149,67 @@ fetchArgs s@State{ip,x,y} instruction mode = case mode of
 
   Absolute -> do
     addr <- immediateAddr s
-    let penalty = False
-    pure (penalty,addr)
+    pure addr
 
   AbsoluteX -> do
     base <- immediateAddr s
     x <- read x
     let addr = base + fromIntegral x
-    let penalty = (hasPageCrossPenalty instruction && pageCross base addr)
-    pure (penalty,addr)
+    penalisePageCross s instruction base addr
+    pure addr
 
   AbsoluteY -> do
     base <- immediateAddr s
     y <- read y
     let addr = base + fromIntegral y
-    let penalty = (hasPageCrossPenalty instruction && pageCross base addr)
-    pure (penalty,addr)
+    penalisePageCross s instruction base addr
+    pure addr
 
   ZeroPage -> do
     addr <- immediateZeroPageAddr s
-    let penalty = False
-    pure (penalty,addr)
+    pure addr
 
   ZeroPageX -> do
     byte <- immediateByte s
     x <- read x
     let addr = makeAddr HL { hi = 0, lo = byte + x }
-    let penalty = False
-    pure (penalty,addr)
+    pure addr
 
   ZeroPageY -> do
     byte <- immediateByte s
     y <- read y
     let addr = makeAddr HL { hi = 0, lo = byte + y }
-    let penalty = False
-    pure (penalty,addr)
+    pure addr
 
   Relative -> do
     pc <- read ip
     off <- immediateByte s
     let dist :: Int = (if off < 128 then fromIntegral off else fromIntegral off - 256)
     let addr = 2 + pc + fromIntegral dist
-    let penalty = False
     -- This addressing mode should have a page cross penalty:
-    -- let penalty = (hasPageCrossPenalty instruction && pageCross pc addr)
     -- But it causes a mismatch with the golden trace; maybe it's wrong!
-    pure (penalty,addr)
+    -- penalisePageCross s instruction pc addr
+    pure addr
 
   Indirect -> do
     base <- immediateAddr s
     addr <- indirect s base
-    let penalty = False
-    pure (penalty,addr)
+    pure addr
 
   IndexedIndirectX -> do
     byte <- immediateByte s
     x <- read x
     let zpAddr = makeAddr HL { hi = 0, lo = byte + x }
     addr <- indirect s zpAddr
-    let penalty = False
-    pure (penalty,addr)
+    pure addr
 
   IndirectIndexedY -> do
     zpAddr <- immediateZeroPageAddr s
     base <- indirect s zpAddr
     y <- read y
     let addr = base + fromIntegral y
-    let penalty = (hasPageCrossPenalty instruction && pageCross base addr)
-    pure (penalty,addr)
+    penalisePageCross s instruction base addr
+    pure addr
 
 
 indirect :: State -> Addr -> Eff Addr
@@ -247,6 +239,13 @@ immediateAddr State{bus,ip} = do
   lo <- read (bus (pc+1))
   hi <- read (bus (pc+2))
   pure $ makeAddr HL {hi,lo}
+
+----------------------------------------------------------------------
+-- page cross penalty
+
+penalisePageCross :: State -> Instruction -> Addr -> Addr -> Eff ()
+penalisePageCross s instruction base addr = do
+  when (hasPageCrossPenalty instruction && pageCross base addr) $ addExtraCycle s
 
 pageCross :: Addr -> Addr -> Bool
 pageCross a1 a2 = do
