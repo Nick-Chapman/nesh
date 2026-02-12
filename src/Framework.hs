@@ -1,6 +1,6 @@
 module Framework
   ( Eff(..), runEffect
-  , Ref(..), read, write
+  , Ref(..), read, write, update
   ) where
 
 import Control.Monad (ap,liftM)
@@ -22,6 +22,11 @@ read Ref{onRead} = onRead
 
 write :: Ref a -> a -> Eff ()
 write Ref{onWrite} = onWrite
+
+update :: (a -> a) -> Ref a -> Eff ()
+update f r = do
+  v <- read r
+  write r (f v)
 
 ----------------------------------------------------------------------
 -- effect

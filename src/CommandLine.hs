@@ -3,7 +3,7 @@ module CommandLine (main) where
 import CPU qualified (Config(..),cpu)
 import Framework (Eff(..),runEffect)
 import NesFile (NesFile(..),loadNesFile)
-import PPU (ppu)
+import PPU qualified (initState,ppu)
 import PRG qualified (ROM)
 import Prelude hiding (read)
 import Prelude qualified
@@ -31,6 +31,11 @@ prgOfNesFile NesFile{prgs} =
 system :: Config -> PRG.ROM -> Eff ()
 system Config{stop_at,trace_cpu,init_pc} prg = do
 
+  bus <- makeCpuBus prg -- including wram
+
+  ppuState <- PPU.initState
+  let ppu = PPU.ppu ppuState
+
   let
     cpuConfig = CPU.Config
       { trace = trace_cpu
@@ -38,9 +43,7 @@ system Config{stop_at,trace_cpu,init_pc} prg = do
       , init_pc = init_pc
       }
 
-  bus <- makeCpuBus prg
-
-  let cpu = CPU.cpu cpuConfig bus
+  let cpu = CPU.cpu cpuConfig bus ppuState
 
   Parallel cpu ppu
 

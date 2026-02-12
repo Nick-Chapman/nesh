@@ -3,10 +3,12 @@ module CPU (Config(..),cpu) where
 import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
-import Framework (Eff(..),Ref(..),write,read)
+import Framework (Eff(..),Ref(..),write,read,update)
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr)
+
+import PPU qualified (State,readPosition) -- so we can peek at x/y in the logging
 
 ----------------------------------------------------------------------
 -- cpu
@@ -19,8 +21,8 @@ data Config = Config
 
 type Bus = (Addr -> Ref U8)
 
-cpu :: Config -> Bus -> Eff ()
-cpu config@Config{trace} bus = do
+cpu :: Config -> Bus -> PPU.State -> Eff ()
+cpu config@Config{trace} bus ppuState = do
   s <- mkState bus
   initialize config s
   loop s
@@ -37,7 +39,7 @@ cpu config@Config{trace} bus = do
       (addr,eff) <- doMode s instruction mode withArg
 
       -- execute
-      when (trace) $ logCpuInstruction s instruction mode addr
+      when (trace) $ logCpuInstruction s instruction mode addr ppuState
       update (+ (1 + sizeMode mode)) ip
       eff
 
@@ -260,15 +262,15 @@ hasPageCrossPenalty = \case
 ----------------------------------------------------------------------
 -- trace instruction
 
-logCpuInstruction :: State -> Instruction -> Mode -> Addr -> Eff ()
-logCpuInstruction s@State{bus,ip} instruction mode addr = do
+logCpuInstruction :: State -> Instruction -> Mode -> Addr -> PPU.State -> Eff ()
+logCpuInstruction s@State{bus,ip} instruction mode addr ppuState = do
   pc <- read ip
   opcode <- read (bus (pc))
   args <- sequence [ read (bus (pc + fromIntegral i)) | i <- [ 1 .. sizeMode mode ] ]
   let bytes = opcode:args
   let bytesS = intercalate " " (map (printf "%02X") bytes)
   let a = printf "%s  %s %s" (ljust 8 bytesS) (show instruction) (seeArgs (mode,args,addr))
-  b <- seeState s
+  b <- seeState s ppuState
   Log $ printf "%04X  %s%s" pc (ljust 42 a) b
 
 ljust :: Int -> String -> String
@@ -322,18 +324,21 @@ mkState bus = do
   cyc <- DefineRegister 0
   pure $ State { ip, a, x, y, flags, sp, bus, extraCycles, cyc }
 
-seeState :: State -> Eff String
-seeState State{a,x,y,flags,sp,cyc} = do
+seeState :: State -> PPU.State -> Eff String
+seeState State{a,x,y,flags,sp,cyc} ppuState = do
   a <- read a
   x <- read x
   y <- read y
   flags <- read flags
   sp <- read sp
   cyc <- read cyc
-  let ppuCYC = cyc*3
-  let ppuCyclesPerScanLine = 341
-  let ppuX :: Int = ppuCYC `mod` ppuCyclesPerScanLine
-  let ppuY :: Int = ppuCYC `div` ppuCyclesPerScanLine
+
+  --let ppuCYC = cyc*3
+  --let ppuCyclesPerScanLine = 341
+  --let _ppuX :: Int = ppuCYC `mod` ppuCyclesPerScanLine
+  --let ppuY :: Int = ppuCYC `div` ppuCyclesPerScanLine
+
+  (ppuX,ppuY) <- PPU.readPosition ppuState
   let
     mes :: String =
       printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"
@@ -653,11 +658,6 @@ increment = update (+1)
 
 decrement :: Ref U8 -> Eff ()
 decrement = update (\v -> v-1)
-
-update :: (a -> a) -> Ref a -> Eff ()
-update f r = do
-  v <- read r
-  write r (f v)
 
 isNegative :: U8 -> Bool
 isNegative v = v `testBit` 7
