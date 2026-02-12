@@ -5,10 +5,10 @@ module PPU
   ) where
 
 import Control.Monad (when)
-import Prelude hiding (read)
 import Framework (Eff(..),Ref(..),read,write,update)
-import Types (Addr,U8)
+import Prelude hiding (read)
 import Text.Printf (printf)
+import Types (Addr,U8,RGB(..))
 
 ppu :: State -> Eff ()
 ppu s = loop
@@ -17,6 +17,7 @@ ppu s = loop
     loop = do
       AdvancePPU 1
       tickPixel s
+      render s
       loop
 
 tickPixel :: State -> Eff ()
@@ -30,6 +31,29 @@ tickPixel State{frame,y,x} = do
     when (yv == 261) $ do
       write y (-1)
       update (+1) frame
+      NewFrame
+
+render :: State -> Eff ()
+render s@State{x,y} = do
+  y <- read y
+  x <- read x
+  when (visible (x,y)) $ gradientPlot s
+
+visible :: (Int,Int) -> Bool
+visible (x,y) = (x >= 0 && x < 256) && (y >= 0 && y < 240)
+
+gradientPlot :: State -> Eff ()
+gradientPlot State{frame,x,y} = do
+  frame <- read frame
+  x <- read x
+  y <- read y
+  when (not $ visible (x,y)) $ error (show ("gradientPlot",x,y))
+  x <- pure $ fromIntegral x
+  y <- pure $ fromIntegral y
+  let r = 0
+  let g = y + fromIntegral frame
+  let b = x + fromIntegral frame
+  Plot (x,y) RGB { r,g,b }
 
 ----------------------------------------------------------------------
 -- registers
@@ -51,13 +75,14 @@ makeRegisters s = do
 makeRegister :: State -> String -> Ref U8
 makeRegister s@State{} name = Ref {onRead,onWrite}
   where
+    log = False
     onRead = do
       let v = 0
-      ppuLog s $ printf "%s: read -> %02x" name v
+      when log $ ppuLog s $ printf "%s: read -> %02x" name v
       pure v
 
     onWrite v = do
-      ppuLog s $ printf "%s: write %02x" name v
+      when log $ ppuLog s $ printf "%s: write %02x" name v
       pure ()
 
 ppuLog :: State -> String -> Eff ()

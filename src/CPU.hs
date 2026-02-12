@@ -25,10 +25,13 @@ cpu :: Config -> Bus -> PPU.State -> Eff ()
 cpu config@Config{trace} bus ppuState = do
   s <- mkState bus
   initialize config s
-  loop s
+  loop 1 s
   where
-    loop :: State -> Eff ()
-    loop s@State{ip,bus} = do
+    loop :: Int -> State -> Eff ()
+    loop i s@State{ip,bus} = do
+
+      when (i `mod` 100_000 == 0) $ Log "I" -- about every 10 frames
+
       maybeHalt config s
       pc <- read ip
 
@@ -46,7 +49,7 @@ cpu config@Config{trace} bus ppuState = do
       -- advance simulation
       extraCycles <- collectExtraCycles s
       advanceCPU s (baseCycles + extraCycles)
-      loop s
+      loop (i+1) s
 
 initialize :: Config -> State -> Eff ()
 initialize Config{init_pc} s@State{ip} =
@@ -271,7 +274,7 @@ logCpuInstruction s@State{bus,ip} instruction mode addr ppuState = do
   let bytesS = intercalate " " (map (printf "%02X") bytes)
   let a = printf "%s  %s %s" (ljust 8 bytesS) (show instruction) (seeArgs (mode,args,addr))
   b <- seeState s ppuState
-  Log $ printf "%04X  %s%s" pc (ljust 42 a) b
+  Log $ printf "%04X  %s%s\n" pc (ljust 42 a) b
 
 ljust :: Int -> String -> String
 ljust n s = s <> take (max 0 (n - length s)) (repeat ' ')

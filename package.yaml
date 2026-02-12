@@ -12,6 +12,9 @@ dependencies:
 - bytestring
 - clock
 - containers
+- sdl2
+- sdl2-ttf
+- text
 
 default-extensions:
 - DuplicateRecordFields
