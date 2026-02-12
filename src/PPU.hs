@@ -23,16 +23,13 @@ tickPixel :: State -> Eff ()
 tickPixel State{frame,y,x} = do
   update (+1) x
   xv <- read x
-  when (xv == cyclesPerScanLine) $ do
+  when (xv == 341) $ do
     write x 0
     update (+1) y
     yv <- read y
-    when (yv == numScanLines) $ do
-      write y 0
+    when (yv == 261) $ do
+      write y (-1)
       update (+1) frame
-  where
-    cyclesPerScanLine = 341
-    numScanLines = 262
 
 ----------------------------------------------------------------------
 -- registers
@@ -82,7 +79,7 @@ data State = State
 initState :: Eff State
 initState = do
   frame <- DefineRegister 0
-  y <- DefineRegister 0
+  y <- DefineRegister (-1)
   x <- DefineRegister 0
   pure State { frame, y, x }
 

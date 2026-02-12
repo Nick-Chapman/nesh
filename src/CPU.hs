@@ -342,7 +342,7 @@ seeState State{a,x,y,flags,sp,cyc} ppuState = do
   let
     mes :: String =
       printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"
-       a x y flags sp ppuY ppuX cyc
+       a x y flags sp (ppuY+1) ppuX cyc
   pure mes
 
 ----------------------------------------------------------------------
