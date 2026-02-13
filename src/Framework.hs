@@ -11,6 +11,7 @@ import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStr)
 import Types (U8,RGB)
+import Foreign.C.Types (CInt)
 
 ----------------------------------------------------------------------
 -- Ref
@@ -40,7 +41,7 @@ data Eff a where
   Bind :: Eff a -> (a -> Eff b) -> Eff b
   Halt :: Eff ()
   NewFrame :: Eff ()
-  Plot :: (U8,U8) -> RGB -> Eff ()
+  Plot :: CInt -> CInt -> RGB -> Eff ()
   Log :: String -> Eff ()
   IO :: IO a -> Eff a
   DefineRegister :: a -> Eff (Ref a)
@@ -48,28 +49,31 @@ data Eff a where
   Parallel :: Eff () -> Eff () -> Eff ()
   AdvancePPU :: Int -> Eff () -- we synchronise everything on PPU ticks
 
-type OnPlot = (U8 -> U8 -> RGB -> IO ())
+type OnPlot = (CInt -> CInt -> RGB -> IO ())
+type OnFrame = ([(CInt,CInt,RGB)] -> IO Bool)
 
-runEffect :: OnPlot -> IO Bool -> Eff () -> IO ()
-runEffect onPlot onFrame eff0 = loop s0 eff0 k0
+runEffect :: OnPlot -> OnFrame -> Eff () -> IO ()
+runEffect _onPlot onFrame eff0 = loop s0 eff0 k0
   where
-    s0 = State { cycles = 0, jobs = [] }
+    s0 = State { cycles = 0, jobs = [], pixels = [] }
     k0 () _ = error "effects should never end"
 
     loop :: State -> Eff a -> (a -> State -> IO ()) -> IO ()
-    loop s@State{cycles=now} eff k = case eff of
+    loop s {-@State{cycles=now}-} eff k = case eff of
       Ret a -> k a s
       Bind m f -> loop s m $ \a s -> loop s (f a) k
 
       Halt -> pure ()
 
-      Plot (x,y) colour -> do
-        onPlot x y colour
+      Plot x y colour -> do
+        _onPlot x y colour
         k () s
+        --k () s { pixels = (x,y,colour) : pixels s }
 
       NewFrame -> do
-        quit <- onFrame
-        if quit then pure () else k () s
+        let State{pixels} = s
+        quit <- onFrame pixels
+        if quit then pure () else k () s { pixels = [] }
 
       Log message -> do
         putOut message
@@ -96,10 +100,13 @@ runEffect onPlot onFrame eff0 = loop s0 eff0 k0
         k f s
 
       Parallel m1 m2 -> do
-        let j2 = Job { resumeTime = now, kunit = \s -> loop s m2 k0 }
+        let State{cycles=now} = s
+        let j2 = Job { resumeTime = now, kunit = \() s -> loop s m2 k0 }
         loop (pushJob s j2) m1 k
       AdvancePPU n -> do
-        let jobMe = Job { resumeTime = now+n, kunit = k () }
+        let State{cycles=now} = s
+        let now_n = now+n
+        let jobMe = Job { resumeTime = now_n, kunit = k }
         resumeNext (pushJob s jobMe)
 
     resumeNext :: State -> IO ()
@@ -109,8 +116,8 @@ runEffect onPlot onFrame eff0 = loop s0 eff0 k0
         [] -> error "resumeNext"
         firstJob:restJobs -> do
           let Job {resumeTime,kunit} = firstJob
-          let s3 = s1 { cycles = resumeTime, jobs = restJobs }
-          kunit s3
+          let s2 = s1 { cycles = resumeTime, jobs = restJobs }
+          kunit () s2
 
 putOut :: String -> IO ()
 putOut s = do
@@ -120,11 +127,12 @@ putOut s = do
 data State = State
   { cycles :: Int
   , jobs :: [Job] -- ordered by resumeTime
+  , pixels :: [(CInt,CInt,RGB)]
   }
 
 data Job = Job
   { resumeTime :: Int
-  , kunit :: State -> IO ()
+  , kunit :: () -> State -> IO ()
   }
 
 pushJob :: State -> Job -> State

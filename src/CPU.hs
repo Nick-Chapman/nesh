@@ -328,7 +328,7 @@ mkState bus = do
   pure $ State { ip, a, x, y, flags, sp, bus, extraCycles, cyc }
 
 seeState :: State -> PPU.State -> Eff String
-seeState State{a,x,y,flags,sp,cyc} ppuState = do
+seeState State{a,x,y,flags,sp,cyc} _ppuState = do
   a <- read a
   x <- read x
   y <- read y
@@ -336,12 +336,13 @@ seeState State{a,x,y,flags,sp,cyc} ppuState = do
   sp <- read sp
   cyc <- read cyc
 
-  --let ppuCYC = cyc*3
-  --let ppuCyclesPerScanLine = 341
-  --let _ppuX :: Int = ppuCYC `mod` ppuCyclesPerScanLine
-  --let ppuY :: Int = ppuCYC `div` ppuCyclesPerScanLine
+  let ppuCYC = cyc*3
+  let ppuCyclesPerScanLine = 341
+  let ppuX :: Int = ppuCYC `mod` ppuCyclesPerScanLine
+  let ppuY :: Int = ppuCYC `div` ppuCyclesPerScanLine - 1
 
-  (ppuX,ppuY) <- PPU.readPosition ppuState
+  let _ = PPU.readPosition
+  --(ppuX,ppuY) <- PPU.readPosition ppuState
   let
     mes :: String =
       printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"

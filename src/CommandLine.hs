@@ -24,7 +24,7 @@ main = do
   case sdl of
     False -> do
       let onPlot _ _ _ = pure () -- ignore plottng
-      let onFrame = pure False -- never quit
+      let onFrame _ = pure False -- never quit
       runEffect onPlot onFrame system
 
     True -> do
@@ -51,8 +51,9 @@ makeSystem Config{stop_at,trace_cpu,init_pc} prg = do
       , stop_at = stop_at
       , init_pc = init_pc
       }
-  let cpu = CPU.cpu cpuConfig bus ppuState
-  Parallel cpu ppu
+  let _cpu = CPU.cpu cpuConfig bus ppuState
+  Parallel _cpu ppu
+  --ppu
 
 data Config = Config
   { rom :: FilePath

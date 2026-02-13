@@ -4,12 +4,13 @@ module Graphics (main) where
 import Data.IORef (newIORef,readIORef,writeIORef)
 
 import Framework (Eff,runEffect)
-import Types (U8,RGB(..))
+import Types --(U8,RGB(..))
 import System.IO (hFlush,stdout,hPutStr)
 import qualified Data.Text as Text (pack)
 import Foreign.C.Types (CInt)
 import Control.Monad (when)
 import SDL (V2(..),V4(..),($=))
+--import SDL.Video
 import Text.Printf (printf)
 import qualified SDL
 
@@ -33,6 +34,11 @@ main system = do
   let winConfig = SDL.defaultWindow { SDL.windowInitialSize = windowSize }
   win <- SDL.createWindow (Text.pack "Dishonesty") $ winConfig
   renderer <- SDL.createRenderer win (-1) SDL.defaultRenderer
+--    { SDL.rendererType = SDL.AcceleratedRenderer }
+--    { SDL.rendererType = SDL.UnacceleratedRenderer }
+--    { SDL.rendererType = SDL.SoftwareRenderer }
+--    { SDL.rendererType = SDL.AcceleratedVSyncRenderer }
+
 
   SDL.rendererDrawColor renderer $= V4 100 100 100 255
   SDL.clear renderer
@@ -42,18 +48,19 @@ main system = do
   frameCounter <- newIORef (1::Int)
 
   let
-    onPlot :: U8 -> U8 -> RGB -> IO ()
-    onPlot x0 y0 rgb = do
-      let x :: CInt = scale (fromIntegral x0 + border)
-      let y = scale (fromIntegral y0 + border)
-      let RGB{r,g,b} = rgb
-      let c = V4 r g b 255
-      SDL.rendererDrawColor renderer $= c
+    onPlot :: CInt -> CInt -> RGB -> IO ()
+    onPlot x0 y0 col = do
+      let x :: CInt = scale (x0 + border)
+      let y = scale (y0 + border)
+      --let RGB{r,g,b} = rgb
+      --let c :: V4 U8 = V4 r g b 255
+      SDL.rendererDrawColor renderer $= col
       let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
       SDL.fillRect renderer (Just rect)
 
-    onFrame :: IO Bool
-    onFrame = do
+    onFrame :: [(CInt,CInt,RGB)] -> IO Bool
+    onFrame _xs = do
+      sequence_ [ onPlot x y c | (x,y,c) <- _xs ]
       SDL.present renderer
 
       n <- readIORef frameCounter

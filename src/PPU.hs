@@ -4,22 +4,49 @@ module PPU
   , ppu
   ) where
 
-import Control.Monad (when)
-import Framework (Eff(..),Ref(..),read,write,update)
+import Control.Monad (when,forM_)
+import Framework --(Eff(..),Ref(..),read,write,update)
 import Prelude hiding (read)
 import Text.Printf (printf)
-import Types (Addr,U8,RGB(..))
+import Types (Addr,U8,RGB) --(..))
+import Foreign.C.Types (CInt)
+import SDL (V4(..))
 
 ppu :: State -> Eff ()
-ppu s = loop
+ppu _s = loop 0
   where
-    loop :: Eff ()
-    loop = do
-      AdvancePPU 1
-      tickPixel s
-      render s
-      loop
 
+    loop :: CInt -> Eff ()
+    loop frame = do
+      --AdvancePPU 1
+      --_tickPixel s
+      --_render s
+
+      -- In total, we have 262 (1+240+21) lines y:[-1..260]
+
+      AdvancePPU 341 -- one pre-visible line (y= -1)
+      forM_ [0..239] $ \y -> do -- 240 visible lines, y:[0..239]
+        forM_ [0..255] $ \x -> do
+          let col = gradientCol frame x y
+          Plot x y col
+        AdvancePPU 341
+      AdvancePPU (21 * 341) -- 21 post-visible lines, y:[240..260]
+      --AdvancePPU (262 * 341)
+      NewFrame
+      loop (frame+1)
+
+gradientCol :: CInt -> CInt -> CInt -> RGB
+gradientCol frame x y = do
+  let r = fromIntegral (y + frame)
+  let g = 0
+  let b = fromIntegral (x + frame)
+  V4 r g b 255
+
+
+--visible :: CInt -> CInt -> Bool
+--visible x y = (x >= 0 && x < 256) && (y >= 0 && y < 240)
+
+{-
 tickPixel :: State -> Eff ()
 tickPixel State{frame,y,x} = do
   update (+1) x
@@ -32,28 +59,7 @@ tickPixel State{frame,y,x} = do
       write y (-1)
       update (+1) frame
       NewFrame
-
-render :: State -> Eff ()
-render s@State{x,y} = do
-  y <- read y
-  x <- read x
-  when (visible (x,y)) $ gradientPlot s
-
-visible :: (Int,Int) -> Bool
-visible (x,y) = (x >= 0 && x < 256) && (y >= 0 && y < 240)
-
-gradientPlot :: State -> Eff ()
-gradientPlot State{frame,x,y} = do
-  frame <- read frame
-  x <- read x
-  y <- read y
-  when (not $ visible (x,y)) $ error (show ("gradientPlot",x,y))
-  x <- pure $ fromIntegral x
-  y <- pure $ fromIntegral y
-  let r = 0
-  let g = y + fromIntegral frame
-  let b = x + fromIntegral frame
-  Plot (x,y) RGB { r,g,b }
+-}
 
 ----------------------------------------------------------------------
 -- registers

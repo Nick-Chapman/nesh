@@ -26,6 +26,7 @@ default-extensions:
 - NamedFieldPuns
 - NumericUnderscores
 - ScopedTypeVariables
+- Strict
 
 ghc-options:
 - -Werror
