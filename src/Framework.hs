@@ -50,30 +50,28 @@ data Eff a where
   AdvancePPU :: Int -> Eff () -- we synchronise everything on PPU ticks
 
 type OnPlot = (CInt -> CInt -> RGB -> IO ())
-type OnFrame = ([(CInt,CInt,RGB)] -> IO Bool)
+type OnFrame = IO Bool
 
 runEffect :: OnPlot -> OnFrame -> Eff () -> IO ()
-runEffect _onPlot onFrame eff0 = loop s0 eff0 k0
+runEffect onPlot onFrame eff0 = loop s0 eff0 k0
   where
-    s0 = State { cycles = 0, jobs = [], pixels = [] }
+    s0 = State { cycles = 0, jobs = [] }
     k0 () _ = error "effects should never end"
 
     loop :: State -> Eff a -> (a -> State -> IO ()) -> IO ()
-    loop s {-@State{cycles=now}-} eff k = case eff of
+    loop s eff k = case eff of
       Ret a -> k a s
       Bind m f -> loop s m $ \a s -> loop s (f a) k
 
       Halt -> pure ()
 
       Plot x y colour -> do
-        _onPlot x y colour
+        onPlot x y colour
         k () s
-        --k () s { pixels = (x,y,colour) : pixels s }
 
       NewFrame -> do
-        let State{pixels} = s
-        quit <- onFrame pixels
-        if quit then pure () else k () s { pixels = [] }
+        quit <- onFrame
+        if quit then pure () else k () s
 
       Log message -> do
         putOut message
@@ -127,7 +125,6 @@ putOut s = do
 data State = State
   { cycles :: Int
   , jobs :: [Job] -- ordered by resumeTime
-  , pixels :: [(CInt,CInt,RGB)]
   }
 
 data Job = Job

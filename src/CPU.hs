@@ -30,7 +30,7 @@ cpu config@Config{trace} bus ppuState = do
     loop :: Int -> State -> Eff ()
     loop i s@State{ip,bus} = do
 
-      when (i `mod` 100_000 == 0) $ Log "I" -- about every 10 frames
+      --when (i `mod` 100_000 == 0) $ Log "I" -- about every 10 frames
 
       maybeHalt config s
       pc <- read ip

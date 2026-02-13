@@ -3,13 +3,12 @@ module Types
   ( U8
   , HL(..)
   , Addr, makeAddr, splitAddr
-  , RGB --(..),
+  , RGB
   ) where
 
 import Data.Word (Word8,Word16)
 import Data.Bits (shiftL,shiftR,(.|.),(.&.))
---import Foreign.C.Types (CInt)
-import SDL (V4) --(..))
+import SDL (V4)
 
 type U8 = Word8
 type U16 = Word16
@@ -25,6 +24,4 @@ splitAddr :: Addr -> HL U8
 splitAddr addr = do
   HL { hi = fromIntegral (addr `shiftR` 8), lo = fromIntegral (addr .&. 0xff) }
 
---data RGB = RGB { r :: U8, g :: U8, b :: U8  }
 type RGB = V4 U8
---let c :: V4 U8 = V4 r g b 255

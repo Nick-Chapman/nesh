@@ -24,7 +24,7 @@ main = do
   case sdl of
     False -> do
       let onPlot _ _ _ = pure () -- ignore plottng
-      let onFrame _ = pure False -- never quit
+      let onFrame = pure False -- never quit
       runEffect onPlot onFrame system
 
     True -> do
