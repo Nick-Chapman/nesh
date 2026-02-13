@@ -26,11 +26,14 @@ default-extensions:
 - NamedFieldPuns
 - NumericUnderscores
 - ScopedTypeVariables
+- Strict
 
 ghc-options:
 - -Werror
 - -Wall
 - -Wno-name-shadowing
+# Default optimisation is -O == -O1
+# And is quicker that -O2 for the gradientCol example
 
 library:
   source-dirs: src

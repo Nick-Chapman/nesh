@@ -112,7 +112,7 @@ sizeMode = \case
 
 doMode :: State -> Instruction -> Mode -> WithArg -> Eff (Addr, Eff ())
 doMode s@State{bus,ip,a=accumulator} instruction mode = \case
-  Arg0 eff -> pure (undefined,eff)
+  Arg0 eff -> pure (0{-undefined-},eff)
   Arg1 f -> do
     case mode of
       Immediate -> do
@@ -121,7 +121,7 @@ doMode s@State{bus,ip,a=accumulator} instruction mode = \case
           eff = do
             byte <- read (bus (pc+1))
             f byte
-        pure (undefined,eff)
+        pure (0{-undefined-},eff)
       _ -> do
         addr <- fetchArgs s instruction mode
         let
@@ -137,7 +137,7 @@ doMode s@State{bus,ip,a=accumulator} instruction mode = \case
     case mode of
       Accumulator -> do
         let eff = f accumulator
-        pure (undefined,eff)
+        pure (0{-undefined-},eff)
       _ -> do
         addr <- fetchArgs s instruction mode
         let eff = f (bus addr)

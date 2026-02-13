@@ -14,13 +14,15 @@ ghc-options:
   echo -Werror >> $out
   echo -Wall >> $out
   echo -Wno-name-shadowing >> $out
-  echo -O2 >> $out
+  echo -O >> $out
+# -O == -O1. Quicker that -O2 for the gradientCol example.
 
 default-extensions:
   echo LambdaCase >> $out
   echo DuplicateRecordFields >> $out
   echo GADTs >> $out
   echo MultiWayIf >> $out
+  echo Strict >> $out
 
 packages:
   echo bytestring >> $@
