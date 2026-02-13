@@ -45,6 +45,8 @@ _v1 = loop 0
 -- v2: Consolidate AdvancePPU calls.
 -- Would have expected this to be quicker. BUT IT IS NOT!
 -- In fact nearly half the speed. Very confused. Why is this??
+-- Update: ("Strict" and -O1) -- 67fps; stable MEM% 0.2
+-- So, we still ahve a puzzle. Why is this slower than v1 ?
 _v2 :: Eff ()
 _v2 = loop 0
   where
@@ -59,6 +61,7 @@ _v2 = loop 0
 
 -- v3: Never advance. So CPU, never gets a chance to run. Much quicker 130fps.
 -- htop shows MEM% stable at around 0.2%
+-- Update: ("Strict" and -O1) -- 130fps; stable MEM% 0.2
 _v3 :: Eff ()
 _v3 = loop 0
   where
@@ -72,6 +75,12 @@ _v3 = loop 0
 
 -- v4: AdvancePPU one cycle at a time, in the inner most loop
 -- seems pretty similar to v1. htop shows slow MEM increase
+-- Update: ("Strict" and -O1) -- 74fps; stable MEM% 0.2
+-- Happy this is the same speed as v1, as this is a more accurate emulation.
+-- AH -- just realised a mistake. This version cheats.
+-- It only advances the PPU 240*256 cycles per frame, instead of 262*341.
+-- so we are in effect running the CPU at a reduced speeed.
+-- Bet if I compensate with an extra Advance, this version gets slower.
 _v4 :: Eff ()
 _v4 = loop 0
   where
