@@ -59,20 +59,6 @@ _v2 = loop 0
       NewFrame
       loop (frame+1)
 
--- v3: Never advance. So CPU, never gets a chance to run. Much quicker 130fps.
--- htop shows MEM% stable at around 0.2%
--- Update: ("Strict" and -O1) -- 130fps; stable MEM% 0.2
-_v3 :: Eff ()
-_v3 = loop 0
-  where
-    loop frame = do
-      forM_ [0..239] $ \y -> do
-        forM_ [0..255] $ \x -> do
-          let col = gradientCol frame x y
-          Plot x y col
-      NewFrame
-      loop (frame+1)
-
 -- v4: AdvancePPU one cycle at a time, in the inner most loop
 -- seems pretty similar to v1. htop shows slow MEM increase
 -- Update: ("Strict" and -O1) -- 74fps; stable MEM% 0.2
@@ -81,6 +67,7 @@ _v3 = loop 0
 -- It only advances the PPU 240*256 cycles per frame, instead of 262*341.
 -- so we are in effect running the CPU at a reduced speeed.
 -- Bet if I compensate with an extra Advance, this version gets slower.
+-- YES. adding the extra advance reduces the speed to 67fps. ok.
 _v4 :: Eff ()
 _v4 = loop 0
   where
@@ -90,26 +77,11 @@ _v4 = loop 0
           let col = gradientCol frame x y
           Plot x y col
           AdvancePPU 1
+      AdvancePPU extra
       NewFrame
       loop (frame+1)
 
--- v5: AdvancePPU 20 cycles at a time.
--- chosen to be closish to the average advance expected from the CPU. (7 cycles * 3 ppu/ccp)
--- hmm. This will in effect cause the CPU to run 20x faster
--- so would expect a massive degration of rendering performance
--- Indeed. See about 10fps
-_v5 :: Eff ()
-_v5 = loop 0
-  where
-    loop frame = do
-      forM_ [0..239] $ \y -> do
-        forM_ [0..255] $ \x -> do
-          let col = gradientCol frame x y
-          Plot x y col
-          AdvancePPU 20
-      NewFrame
-      loop (frame+1)
-
+    extra = 262*341 - 240*256
 
 
 gradientCol :: CInt -> CInt -> CInt -> RGB
