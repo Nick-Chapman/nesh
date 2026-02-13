@@ -13,20 +13,91 @@ import Foreign.C.Types (CInt)
 import SDL (V4(..))
 
 ppu :: State -> Eff ()
-ppu _s = loop 0
+ppu State{} = _v1 -- SELECT VERSION HERE
+
+-- In total, we have 262 (1+240+21) lines y:[-1..260]
+--   One pre-visible line, y:-1
+--   240 visible lines, y:[0..239]
+--   21 post-visible lines, y:[240..260]
+
+-- BASELINE version. Just over 50fps
+-- htop shows MEM% slowly increasing over time.
+-- Over time, speed seems to slowly decrease down to 45fps.
+-- And we see noticable GC pauses in the rendering
+_v1 :: Eff ()
+_v1 = do Log "v1\n"; loop 0
   where
-    -- In total, we have 262 (1+240+21) lines y:[-1..260]
-    loop :: CInt -> Eff ()
     loop frame = do
-      AdvancePPU 341 -- one pre-visible line (y= -1)
-      forM_ [0..239] $ \y -> do -- 240 visible lines, y:[0..239]
+      AdvancePPU 341
+      forM_ [0..239] $ \y -> do
         forM_ [0..255] $ \x -> do
           let col = gradientCol frame x y
           Plot x y col
         AdvancePPU 341
-      AdvancePPU (21 * 341) -- 21 post-visible lines, y:[240..260]
+      AdvancePPU (21 * 341)
       NewFrame
       loop (frame+1)
+
+-- v2: Consolidate AdvancePPU calls.
+-- Would have expected this to be quicker. BUT IT IS NOT!
+-- In fact nearly half the speed. Very confused. Why is this??
+_v2 :: Eff ()
+_v2 = do Log "v2\n"; loop 0
+  where
+    loop frame = do
+      forM_ [0..239] $ \y -> do
+        forM_ [0..255] $ \x -> do
+          let col = gradientCol frame x y
+          Plot x y col
+      AdvancePPU (262 * 341)
+      NewFrame
+      loop (frame+1)
+
+-- v3: Never advance. So CPU, never gets a chance to run. Much quicker 130fps.
+-- htop shows MEM% stable at around 0.2%
+_v3 :: Eff ()
+_v3 = do Log "v3\n"; loop 0
+  where
+    loop frame = do
+      forM_ [0..239] $ \y -> do
+        forM_ [0..255] $ \x -> do
+          let col = gradientCol frame x y
+          Plot x y col
+      NewFrame
+      loop (frame+1)
+
+-- v4: AdvancePPU one cycle at a time, in the inner most loop
+-- seems pretty similar to v1. htop shows slow MEM increase
+_v4 :: Eff ()
+_v4 = do Log "v4\n"; loop 0
+  where
+    loop frame = do
+      forM_ [0..239] $ \y -> do
+        forM_ [0..255] $ \x -> do
+          let col = gradientCol frame x y
+          Plot x y col
+          AdvancePPU 1
+      NewFrame
+      loop (frame+1)
+
+-- v5: AdvancePPU 20 cycles at a time.
+-- chosen to be closish to the average advance expected from the CPU. (7 cycles * 3 ppu/ccp)
+-- hmm. This will in effect cause the CPU to run 20x faster
+-- so would expect a massive degration of rendering performance
+-- Indeed. See about 10fps
+_v5 :: Eff ()
+_v5 = do Log "v5\n"; loop 0
+  where
+    loop frame = do
+      forM_ [0..239] $ \y -> do
+        forM_ [0..255] $ \x -> do
+          let col = gradientCol frame x y
+          Plot x y col
+          AdvancePPU 20
+      NewFrame
+      loop (frame+1)
+
+
 
 gradientCol :: CInt -> CInt -> CInt -> RGB
 gradientCol frame x y = do
