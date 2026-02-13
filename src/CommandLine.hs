@@ -1,7 +1,7 @@
 module CommandLine (main) where
 
 import Bus (makeCpuBus)
-import CPU qualified (Config(..),cpu)
+import CPU qualified (Config(..),mkState,cpu,peekCYC)
 import Framework (Eff(..),runEffect)
 import Graphics qualified (main)
 import NesFile (NesFile(..),loadNesFile)
@@ -44,14 +44,15 @@ makeSystem Config{stop_at,trace_cpu,init_pc} prg = do
   ppuState <- PPU.initState
   let ppuRegiserBus = PPU.makeRegisters ppuState
   bus <- makeCpuBus prg ppuRegiserBus -- including wram
-  let ppu = PPU.ppu ppuState
+  cpuState <- CPU.mkState bus
+  let ppu = PPU.ppu (CPU.peekCYC cpuState) ppuState
   let
     cpuConfig = CPU.Config
       { trace = trace_cpu
       , stop_at = stop_at
       , init_pc = init_pc
       }
-  let _cpu = CPU.cpu cpuConfig bus ppuState
+  let _cpu = CPU.cpu cpuConfig cpuState ppuState
   Parallel _cpu ppu
   --ppu
 

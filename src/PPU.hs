@@ -12,9 +12,11 @@ import Types (Addr,U8,RGB)
 import Foreign.C.Types (CInt)
 import SDL (V4(..))
 
-ppu :: State -> Eff ()
-ppu State{} = _v1 -- SELECT VERSION HERE
+type PeekCpuCyc = Eff Int
 
+ppu :: PeekCpuCyc -> State -> Eff ()
+ppu _peekCpuCyc State{} = _v1 -- SELECT VERSION HERE
+ where
 -- In total, we have 262 (1+240+21) lines y:[-1..260]
 --   One pre-visible line, y:-1
 --   240 visible lines, y:[0..239]
@@ -28,8 +30,8 @@ ppu State{} = _v1 -- SELECT VERSION HERE
 -- "Strict" language extension -- MEM% stops growing. Stable at 0.2%.
 -- Opt level -O (= -O1) instead of -O2 increases speed to 73fps.
 
-_v1 :: Eff ()
-_v1 = loop 0
+ _v1 :: Eff ()
+ _v1 = loop 0
   where
     loop frame = do
       AdvancePPU 341
@@ -39,6 +41,9 @@ _v1 = loop 0
           Plot x y col
         AdvancePPU 341
       AdvancePPU (21 * 341)
+      when ((frame+1) `mod` 60 == 0) $ do
+        cyc <- _peekCpuCyc
+        Log $ (printf "(CYC=%d)" cyc)
       NewFrame
       loop (frame+1)
 
@@ -47,8 +52,8 @@ _v1 = loop 0
 -- In fact nearly half the speed. Very confused. Why is this??
 -- Update: ("Strict" and -O1) -- 67fps; stable MEM% 0.2
 -- So, we still ahve a puzzle. Why is this slower than v1 ?
-_v2 :: Eff ()
-_v2 = loop 0
+ _v2 :: Eff ()
+ _v2 = loop 0
   where
     loop frame = do
       forM_ [0..239] $ \y -> do
@@ -56,6 +61,9 @@ _v2 = loop 0
           let col = gradientCol frame x y
           Plot x y col
       AdvancePPU (262 * 341)
+      when ((frame+1) `mod` 60 == 0) $ do
+        cyc <- _peekCpuCyc
+        Log $ (printf "(CYC=%d)" cyc)
       NewFrame
       loop (frame+1)
 
@@ -68,8 +76,8 @@ _v2 = loop 0
 -- so we are in effect running the CPU at a reduced speeed.
 -- Bet if I compensate with an extra Advance, this version gets slower.
 -- YES. adding the extra advance reduces the speed to 67fps. ok.
-_v4 :: Eff ()
-_v4 = loop 0
+ _v4 :: Eff ()
+ _v4 = loop 0
   where
     loop frame = do
       forM_ [0..239] $ \y -> do
@@ -78,6 +86,9 @@ _v4 = loop 0
           Plot x y col
           AdvancePPU 1
       AdvancePPU extra
+      when ((frame+1) `mod` 60 == 0) $ do
+        cyc <- _peekCpuCyc
+        Log $ (printf "(CYC=%d)" cyc)
       NewFrame
       loop (frame+1)
 

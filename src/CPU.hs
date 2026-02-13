@@ -1,4 +1,8 @@
-module CPU (Config(..),cpu) where
+module CPU
+  ( State, mkState, peekCYC,
+    Config(..),
+    cpu
+  ) where
 
 import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
@@ -21,9 +25,8 @@ data Config = Config
 
 type Bus = (Addr -> Ref U8)
 
-cpu :: Config -> Bus -> PPU.State -> Eff ()
-cpu config@Config{trace} bus ppuState = do
-  s <- mkState bus
+cpu :: Config -> State -> PPU.State -> Eff ()
+cpu config@Config{trace} s ppuState = do
   initialize config s
   loop 1 s
   where
@@ -348,6 +351,9 @@ seeState State{a,x,y,flags,sp,cyc} _ppuState = do
       printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"
        a x y flags sp (ppuY+1) ppuX cyc
   pure mes
+
+peekCYC :: State -> Eff Int
+peekCYC State{cyc} = read cyc
 
 ----------------------------------------------------------------------
 -- Flags (bits of flags register)
