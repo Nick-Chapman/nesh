@@ -4,12 +4,12 @@ module NesFile
 
 --import Data.Bits (testBit)
 --import PPU.PMem(NametableMirroring(..))
---import qualified CHR as CHR (ROM,init)
 import Control.Monad (when)
-import Data.ByteString.Internal (w2c) --,c2w)
+import Data.ByteString.Internal (w2c)
 import Types (U8)
 import qualified Data.ByteString as BS (readFile,unpack)
-import qualified PRG as PRG (ROM,init)
+import qualified PRG (ROM,init)
+import qualified CHR (ROM,init)
 
 headerSize :: Int
 headerSize = 16
@@ -26,7 +26,7 @@ chrSize = 2 * patSize --4k
 data NesFile = NesFile
   { header :: [U8]
   , prgs :: [PRG.ROM]
---  , chrs :: [CHR.ROM]
+  , chrs :: [CHR.ROM]
 --  , ntm :: NametableMirroring
   }
 
@@ -45,5 +45,5 @@ loadNesFile path = do
   --let ntm = if byteToUnsigned (bs !! 6) `testBit` 0 then NTM_Horizontal else NTM_Vertical
   when (length bs /= headerSize + (x * prgSize) + (y * chrSize)) $ error "bad file size"
   let prgs = map (\i -> PRG.init $ take prgSize $ drop (headerSize + i * prgSize) bs) [0..x-1]
-  --let chrs = map (\i -> CHR.init $ take chrSize $ drop (headerSize + x * prgSize + i * 2 * patSize) bs) [0..y-1]
-  return $ NesFile { header,  prgs } --,  chrs, ntm }
+  let chrs = map (\i -> CHR.init $ take chrSize $ drop (headerSize + x * prgSize + i * 2 * patSize) bs) [0..y-1]
+  return $ NesFile { header,  prgs, chrs } --,  ntm }

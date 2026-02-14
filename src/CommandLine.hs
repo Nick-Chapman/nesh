@@ -1,7 +1,8 @@
 module CommandLine (main) where
 
 import Bus (makeCpuBus)
-import CPU qualified (Config(..),mkState,cpu,peekCYC)
+import CHR qualified (ROM)
+import CPU qualified (Config(..),mkState,cpu)
 import Framework (Eff(..),runEffect)
 import Graphics qualified (main)
 import NesFile (NesFile(..),loadNesFile)
@@ -18,43 +19,14 @@ main = do
   args <- getArgs
   let config@Config{rom,sdl} = parseConfig args
   nesfile <- loadNesFile rom
-  let prg = prgOfNesFile nesfile
-  let system = makeSystem config prg
-
+  let system = makeSystem config nesfile
   case sdl of
     False -> do
       let onPlot _ _ _ = pure () -- ignore plottng
       let onFrame = pure False -- never quit
       runEffect onPlot onFrame system
-
     True -> do
       Graphics.main system
-
-
-prgOfNesFile :: NesFile -> PRG.ROM
-prgOfNesFile NesFile{prgs} =
-  case prgs of
-    [prg2] -> prg2
-    -- [prg1,prg2] -> (Just prg1, prg2)
-    _  ->
-      error $ "emu, unexpected number of prg: " <> show (length prgs)
-
-makeSystem :: Config -> PRG.ROM -> Eff ()
-makeSystem Config{stop_at,trace_cpu,init_pc} prg = do
-  ppuState <- PPU.initState
-  let ppuRegiserBus = PPU.makeRegisters ppuState
-  bus <- makeCpuBus prg ppuRegiserBus -- including wram
-  cpuState <- CPU.mkState bus
-  let ppu = PPU.ppu (CPU.peekCYC cpuState) ppuState
-  let
-    cpuConfig = CPU.Config
-      { trace = trace_cpu
-      , stop_at = stop_at
-      , init_pc = init_pc
-      }
-  let _cpu = CPU.cpu cpuConfig cpuState ppuState
-  Parallel _cpu ppu
-  --ppu
 
 data Config = Config
   { rom :: FilePath
@@ -83,3 +55,36 @@ parseConfig = loop config0
       "--init-pc":n:rest -> loop acc { init_pc = Just (Prelude.read n) } rest
       flag@('-':_):_ -> error (printf "unknown flag: %s" flag)
       rom:rest -> loop acc { rom } rest
+
+makeSystem :: Config -> NesFile -> Eff ()
+makeSystem Config{stop_at,trace_cpu,init_pc} nesfile = do
+  let prg = prgOfNesFile nesfile
+  let chr = chrOfNesFile nesfile
+  ppuState <- PPU.initState chr
+  let ppuRegiserBus = PPU.makeRegisters ppuState
+  bus <- makeCpuBus prg ppuRegiserBus -- including wram
+  cpuState <- CPU.mkState bus
+  --let _peekCpuCyc = CPU.peekCYC cpuState
+  let ppu = PPU.ppu ppuState
+  let
+    cpuConfig = CPU.Config
+      { trace = trace_cpu
+      , stop_at = stop_at
+      , init_pc = init_pc
+      }
+  let cpu = CPU.cpu cpuConfig cpuState ppuState
+  Parallel cpu ppu
+
+prgOfNesFile :: NesFile -> PRG.ROM
+prgOfNesFile NesFile{prgs} =
+  case prgs of
+    [prg2] -> prg2
+    -- [prg1,prg2] -> (Just prg1, prg2)
+    _  ->
+      error $ "emu, unexpected number of prg: " <> show (length prgs)
+
+chrOfNesFile :: NesFile -> CHR.ROM
+chrOfNesFile NesFile{chrs} =
+  case chrs of
+    [chr] -> chr
+    _  -> error "emu, unexpected number of chr"

@@ -1,37 +1,63 @@
 module PPU
-  ( State, initState, readPosition
+  ( State, initState --, readPosition
   , makeRegisters
   , ppu
+  , makePpuBus
   ) where
 
+import CHR qualified (ROM,read)
 import Control.Monad (when,forM_)
+import Data.Bits (testBit)
+import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read) --,write,update)
 import Prelude hiding (read)
+import SDL (V4(..))
 import Text.Printf (printf)
 import Types (Addr,U8,RGB)
-import Foreign.C.Types (CInt)
-import SDL (V4(..))
 
-type PeekCpuCyc = Eff Int
+data What = Gradient | ViewTiles
 
-ppu :: PeekCpuCyc -> State -> Eff ()
-ppu _peekCpuCyc State{} = _v1 -- SELECT VERSION HERE
- where
+ppu :: State -> Eff ()
+ppu state = do
+  let what = ViewTiles -- select here
+  case what of
+    Gradient -> testGradient
+    ViewTiles ->  viewTiles state
+
+viewTiles :: State -> Eff ()
+viewTiles ppuState = loop
+  where
+    loop = do
+      oneFrame
+      NewFrame
+      AdvancePPU 100_000
+      loop
+
+    oneFrame = do
+      let scale = 2
+      let scaledSize = 8 * scale
+      let tilesPerRow = 256 `div` scaledSize
+      forM_ [0..239] $ \tileId -> do
+        let startX = tileId `mod` tilesPerRow * scaledSize
+        let startY = tileId `div` tilesPerRow * scaledSize
+        forM_ [0..7] $ \y -> do
+          tile <- makeTile ppuState False tileId (fromIntegral y)
+          forM_ [0..7] $ \x -> do
+            let col = lookupPalette testPalette (getColourIndex tile (fromIntegral x))
+            forM_ [0..scale-1] $ \yy -> do
+              forM_ [0..scale-1] $ \xx -> do
+                Plot
+                  (fromIntegral $ startX + x * scale + xx)
+                  (fromIntegral $ startY + y * scale + yy)
+                  col
+
+
+testGradient :: Eff ()
+testGradient = loop 0
 -- In total, we have 262 (1+240+21) lines y:[-1..260]
 --   One pre-visible line, y:-1
 --   240 visible lines, y:[0..239]
 --   21 post-visible lines, y:[240..260]
-
--- BASELINE version. Just over 50fps
--- htop shows MEM% slowly increasing over time.
--- Over time, speed seems to slowly decrease down to 45fps.
--- And we see noticable GC pauses in the rendering
-
--- "Strict" language extension -- MEM% stops growing. Stable at 0.2%.
--- Opt level -O (= -O1) instead of -O2 increases speed to 73fps.
-
- _v1 :: Eff ()
- _v1 = loop 0
   where
     loop frame = do
       AdvancePPU 341
@@ -41,71 +67,19 @@ ppu _peekCpuCyc State{} = _v1 -- SELECT VERSION HERE
           Plot x y col
         AdvancePPU 341
       AdvancePPU (21 * 341)
-      when ((frame+1) `mod` 60 == 0) $ do
-        cyc <- _peekCpuCyc
-        Log $ (printf "(CYC=%d)" cyc)
       NewFrame
       loop (frame+1)
 
--- v2: Consolidate AdvancePPU calls.
--- Would have expected this to be quicker. BUT IT IS NOT!
--- In fact nearly half the speed. Very confused. Why is this??
--- Update: ("Strict" and -O1) -- 67fps; stable MEM% 0.2
--- So, we still ahve a puzzle. Why is this slower than v1 ?
- _v2 :: Eff ()
- _v2 = loop 0
-  where
-    loop frame = do
-      forM_ [0..239] $ \y -> do
-        forM_ [0..255] $ \x -> do
-          let col = gradientCol frame x y
-          Plot x y col
-      AdvancePPU (262 * 341)
-      when ((frame+1) `mod` 60 == 0) $ do
-        cyc <- _peekCpuCyc
-        Log $ (printf "(CYC=%d)" cyc)
-      NewFrame
-      loop (frame+1)
+    gradientCol :: CInt -> CInt -> CInt -> RGB
+    gradientCol frame x y = do
+      let r = fromIntegral (y + frame)
+      let g = 0
+      let b = fromIntegral (x + frame)
+      V4 r g b 255
 
--- v4: AdvancePPU one cycle at a time, in the inner most loop
--- seems pretty similar to v1. htop shows slow MEM increase
--- Update: ("Strict" and -O1) -- 74fps; stable MEM% 0.2
--- Happy this is the same speed as v1, as this is a more accurate emulation.
--- AH -- just realised a mistake. This version cheats.
--- It only advances the PPU 240*256 cycles per frame, instead of 262*341.
--- so we are in effect running the CPU at a reduced speeed.
--- Bet if I compensate with an extra Advance, this version gets slower.
--- YES. adding the extra advance reduces the speed to 67fps. ok.
- _v4 :: Eff ()
- _v4 = loop 0
-  where
-    loop frame = do
-      forM_ [0..239] $ \y -> do
-        forM_ [0..255] $ \x -> do
-          let col = gradientCol frame x y
-          Plot x y col
-          AdvancePPU 1
-      AdvancePPU extra
-      when ((frame+1) `mod` 60 == 0) $ do
-        cyc <- _peekCpuCyc
-        Log $ (printf "(CYC=%d)" cyc)
-      NewFrame
-      loop (frame+1)
-
-    extra = 262*341 - 240*256
-
-
-gradientCol :: CInt -> CInt -> CInt -> RGB
-gradientCol frame x y = do
-  let r = fromIntegral (y + frame)
-  let g = 0
-  let b = fromIntegral (x + frame)
-  V4 r g b 255
 
 ----------------------------------------------------------------------
 -- registers
-
-type Bus = (Addr -> Ref U8)
 
 makeRegisters :: State -> Bus
 makeRegisters s = do
@@ -120,43 +94,106 @@ makeRegisters s = do
         error $ printf "PPU.makeRegisters: address = $%04X" a
 
 makeRegister :: State -> String -> Ref U8
-makeRegister s@State{} name = Ref {onRead,onWrite}
+makeRegister State{} name = Ref {onRead,onWrite}
   where
     log = False
     onRead = do
       let v = 0
-      when log $ ppuLog s $ printf "%s: read -> %02x" name v
+      when log $ Log $ printf "%s: read -> %02x" name v
       pure v
 
     onWrite v = do
-      when log $ ppuLog s $ printf "%s: write %02x" name v
+      when log $ Log $ printf "%s: write %02x" name v
       pure ()
 
-ppuLog :: State -> String -> Eff ()
-ppuLog State{frame,x,y} message = do
-  frame <- read frame
-  x <- read x
-  y <- read y
-  Log $ printf "%d (%3d,%3d) : %s" frame x y message
+----------------------------------------------------------------------
+-- PPU Bus
+
+type Bus = (Addr -> Ref U8)
+
+makePpuBus :: CHR.ROM -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
+makePpuBus chr = do
+  pure $ \a -> do
+    if
+      | a <= 0x1fff
+        -> readCHR chr a
+
+      | otherwise -> do
+        error $ printf "makePpuBus: address = $%04X" a
+
+
+readCHR :: CHR.ROM -> Addr -> Ref U8
+readCHR chr a = readonly (CHR.read chr a)
+  where
+    readonly :: U8 -> Ref U8
+    readonly byte =
+      Ref { onRead = pure byte
+          , onWrite = \v -> error (show ("readonly/onWrite",a,v))
+          }
 
 ----------------------------------------------------------------------
--- state
+-- PPU State
 
 data State = State
-  { frame :: Ref Int
-  , y :: Ref Int
-  , x :: Ref Int
+  { bus :: Addr -> Ref U8
   }
 
-initState :: Eff State
-initState = do
-  frame <- DefineRegister 0
-  y <- DefineRegister (-1)
-  x <- DefineRegister 0
-  pure State { frame, y, x }
+initState :: CHR.ROM -> Eff State
+initState chr = do
+  bus <- makePpuBus chr
+  pure State {bus}
 
-readPosition :: State -> Eff (Int,Int)
-readPosition State{x,y} = do
-  x <- read x
-  y <- read y
-  pure (x,y)
+----------------------------------------------------------------------
+-- Palette
+
+type Colour = RGB
+
+data Palette = Palette (ColourIndex -> Colour)
+
+lookupPalette :: Palette -> ColourIndex -> Colour
+lookupPalette (Palette f) = f
+
+testPalette :: Palette
+testPalette = Palette $ \case
+  I0 -> grey 0x00
+  I1 -> grey 0x55
+  I2 -> grey 0xAA
+  I3 -> grey 0xFF
+  where
+    grey x = rgb x x x
+    rgb r g b = V4 r g b 0
+
+type ColourIndex = U2
+
+data U2 = I0 | I1 | I2 | I3
+
+----------------------------------------------------------------------
+-- Tile
+
+type PatternTableId = Bool
+type TileId = Int
+
+data Tile = TileX
+  { loRow :: U8
+  , hiRow :: U8
+  }
+
+makeTile :: State -> PatternTableId -> TileId -> U8 -> Eff Tile
+makeTile State{bus} patternTableId tileId y = do
+  let tableAddr = if patternTableId then 0x1000 else 0x0000
+  let loPlaneAddr = tableAddr + fromIntegral tileId * 16
+  let hiPlaneAddr = loPlaneAddr + 8
+  loRow <- read (bus (loPlaneAddr + fromIntegral y))
+  hiRow <- read (bus (hiPlaneAddr + fromIntegral y))
+  pure TileX {loRow,hiRow}
+
+getColourIndex :: Tile -> U8 -> ColourIndex
+getColourIndex TileX{loRow,hiRow} x = do
+  let i = 7 - fromIntegral x
+  let lo = loRow `testBit` i
+  let hi = hiRow `testBit` i
+  case (hi,lo) of
+    (False,False) -> I0
+    (False,True) -> I1
+    (True,False) -> I2
+    (True,True) -> I3

@@ -12,7 +12,7 @@ import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr)
 
-import PPU qualified (State,readPosition) -- so we can peek at x/y in the logging
+import PPU qualified (State) --,readPosition) -- so we can peek at x/y in the logging
 
 ----------------------------------------------------------------------
 -- cpu
@@ -344,7 +344,7 @@ seeState State{a,x,y,flags,sp,cyc} _ppuState = do
   let ppuX :: Int = ppuCYC `mod` ppuCyclesPerScanLine
   let ppuY :: Int = ppuCYC `div` ppuCyclesPerScanLine - 1
 
-  let _ = PPU.readPosition
+  --let _ = PPU.readPosition
   --(ppuX,ppuY) <- PPU.readPosition ppuState
   let
     mes :: String =
