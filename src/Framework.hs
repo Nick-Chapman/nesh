@@ -10,8 +10,7 @@ import Data.Ord (comparing)
 import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStr)
-import Types (U8,RGB)
-import Foreign.C.Types (CInt)
+import Types (U8)
 
 ----------------------------------------------------------------------
 -- Ref
@@ -40,8 +39,6 @@ data Eff a where
   Ret :: a -> Eff a
   Bind :: Eff a -> (a -> Eff b) -> Eff b
   Halt :: Eff ()
-  NewFrame :: Eff ()
-  Plot :: CInt -> CInt -> RGB -> Eff ()
   Log :: String -> Eff ()
   IO :: IO a -> Eff a
   DefineRegister :: a -> Eff (Ref a)
@@ -49,11 +46,8 @@ data Eff a where
   Parallel :: Eff () -> Eff () -> Eff ()
   AdvancePPU :: Int -> Eff () -- we synchronise everything on PPU ticks
 
-type OnPlot = (CInt -> CInt -> RGB -> IO ())
-type OnFrame = IO Bool
-
-runEffect :: OnPlot -> OnFrame -> Eff () -> IO ()
-runEffect onPlot onFrame eff0 = loop s0 eff0 k0
+runEffect :: Eff () -> IO ()
+runEffect eff0 = loop s0 eff0 k0
   where
     s0 = State { cycles = 0, jobs = [] }
     k0 () _ = error "effects should never end"
@@ -64,14 +58,6 @@ runEffect onPlot onFrame eff0 = loop s0 eff0 k0
       Bind m f -> loop s m $ \a s -> loop s (f a) k
 
       Halt -> pure ()
-
-      Plot x y colour -> do
-        onPlot x y colour
-        k () s
-
-      NewFrame -> do
-        quit <- onFrame
-        if quit then pure () else k () s
 
       Log message -> do
         putOut message

@@ -3,6 +3,7 @@ module PPU
   , makeRegisters
   , ppu
   , makePpuBus
+  , Graphics(..)
   ) where
 
 import Control.Monad (when,forM_)
@@ -22,17 +23,19 @@ ppu :: State -> Eff ()
 ppu state = do
   let what = ViewTiles -- select here
   case what of
-    Gradient -> testGradient
+    Gradient -> testGradient state
     ViewTiles ->  viewTiles state
 
 viewTiles :: State -> Eff ()
-viewTiles ppuState = loop
+viewTiles ppuState = loop 0
   where
-    loop = do
+    State{graphics=Graphics{plot,displayFrame}} = ppuState
+
+    loop frame = do
       oneFrame
-      NewFrame
-      AdvancePPU 100_000
-      loop
+      AdvancePPU (341 * 260)
+      displayFrame frame
+      loop (frame+1)
 
     oneFrame = do
       let scale = 2
@@ -47,28 +50,30 @@ viewTiles ppuState = loop
             let col = lookupPalette testPalette (getColourIndex tile (fromIntegral x))
             forM_ [0..scale-1] $ \yy -> do
               forM_ [0..scale-1] $ \xx -> do
-                Plot
+                plot
                   (fromIntegral $ startX + x * scale + xx)
                   (fromIntegral $ startY + y * scale + yy)
                   col
 
 
-testGradient :: Eff ()
-testGradient = loop 0
+testGradient :: State -> Eff ()
+testGradient state = loop 0
 -- In total, we have 262 (1+240+21) lines y:[-1..260]
 --   One pre-visible line, y:-1
 --   240 visible lines, y:[0..239]
 --   21 post-visible lines, y:[240..260]
   where
+    State{graphics=Graphics{plot,displayFrame}} = state
+
     loop frame = do
       AdvancePPU 341
       forM_ [0..239] $ \y -> do
         forM_ [0..255] $ \x -> do
-          let col = gradientCol frame x y
-          Plot x y col
+          let col = gradientCol (fromIntegral frame) x y
+          plot x y col
         AdvancePPU 341
       AdvancePPU (21 * 341)
-      NewFrame
+      displayFrame frame
       loop (frame+1)
 
     gradientCol :: CInt -> CInt -> CInt -> RGB
@@ -125,14 +130,23 @@ makePpuBus mapper = do
 ----------------------------------------------------------------------
 -- PPU State
 
-data State = State
+data State = State -- TODO: rename Context (because value never changes!)
   { bus :: Addr -> Ref U8
+  , graphics :: Graphics
   }
 
-initState :: Mapper -> Eff State
-initState mapper = do
+initState :: Mapper -> Graphics -> Eff State
+initState mapper graphics = do
   bus <- makePpuBus mapper
-  pure State {bus}
+  pure State {bus,graphics}
+
+----------------------------------------------------------------------
+-- Graphics
+
+data Graphics = Graphics
+  { plot :: CInt -> CInt -> RGB -> Eff ()
+  , displayFrame :: Int -> Eff ()
+  }
 
 ----------------------------------------------------------------------
 -- Palette

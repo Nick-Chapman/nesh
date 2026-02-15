@@ -1,6 +1,6 @@
 
 *test-nestest: nestest.expected nestest.actual
-  git diff --word-diff=color $ins | head -20
+  git diff --word-diff=color $ins # | head -20
 
 nestest.size: nestest.out
   echo $$(cat $< | wc -l) > $out

@@ -1,20 +1,23 @@
 
 module Graphics (main) where
 
-import Data.IORef (newIORef,readIORef,writeIORef)
-
+import CommandLine (Config)
 import Control.Monad (when)
+import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-import Framework (Eff,runEffect)
+import Framework (Eff(..),runEffect)
+import Mapper (Mapper)
+import PPU qualified (Graphics(..))
 import SDL (V2(..),V4(..),($=))
+import System (makeSystem)
 import System.IO (hFlush,stdout,hPutStr)
 import Text.Printf (printf)
 import Types (RGB)
 import qualified Data.Text as Text (pack)
 import qualified SDL
 
-main :: Eff () -> IO ()
-main system = do
+main :: Config -> Mapper -> IO ()
+main config mapper = do
 
   SDL.initializeAll
 
@@ -44,8 +47,8 @@ main system = do
   frameCounter <- newIORef (1::Int)
 
   let
-    onPlot :: CInt -> CInt -> RGB -> IO ()
-    onPlot x0 y0 col = do
+    onPlot :: CInt -> CInt -> RGB -> Eff ()
+    onPlot x0 y0 col = IO $ do
       let x = scale (x0 + border)
       let y = scale (y0 + border)
       SDL.rendererDrawColor renderer $= col
@@ -72,7 +75,14 @@ main system = do
       let quit = any isQuitEvent events
       pure quit
 
-  runEffect onPlot onFrame system
+  let graphics = PPU.Graphics
+        { plot = onPlot
+        , displayFrame = \_ -> do
+            quit <- IO onFrame
+            if quit then Halt else pure ()
+        }
+  let system = makeSystem config mapper graphics
+  runEffect system
 
   putOut "\n"
   SDL.destroyRenderer renderer
