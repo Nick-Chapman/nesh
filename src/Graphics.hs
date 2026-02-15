@@ -7,7 +7,7 @@ import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),runEffect)
 import Mapper (Mapper)
-import PPU qualified (Graphics(..))
+import PPU qualified (Graphics(..),changeMode,initState)
 import SDL (V2(..),V4(..),($=))
 import System (makeSystem)
 import System.IO (hFlush,stdout,hPutStr)
@@ -46,43 +46,51 @@ main config mapper = do
   lastTicks <- SDL.ticks >>= newIORef
   frameCounter <- newIORef (1::Int)
 
-  let
-    onPlot :: CInt -> CInt -> RGB -> Eff ()
-    onPlot x0 y0 col = IO $ do
-      let x = scale (x0 + border)
-      let y = scale (y0 + border)
-      SDL.rendererDrawColor renderer $= col
-      let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
-      SDL.fillRect renderer (Just rect)
+  runEffect $ do
 
-    onFrame :: IO Bool
-    onFrame = do
-      SDL.present renderer
+    let
+      onPlot :: CInt -> CInt -> RGB -> Eff ()
+      onPlot x0 y0 col = IO $ do
+        let x = scale (x0 + border)
+        let y = scale (y0 + border)
+        SDL.rendererDrawColor renderer $= col
+        let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
+        SDL.fillRect renderer (Just rect)
 
-      n <- readIORef frameCounter
-      writeIORef frameCounter (n+1)
-      --putOut "."
-      -- every 60 frames, display fps achieved
-      when (n `mod` 60 == 0) $ do
-        t1 <- readIORef lastTicks
-        t2 <- SDL.ticks
-        writeIORef lastTicks t2
-        let actualDuration :: Double = fromIntegral $ max (t2 - t1) 1
-        let fpsAchieved = 60 * 1000 / actualDuration
-        putOut $ printf "[%.0g]" fpsAchieved
+      onFrame :: IO (Bool,Bool)
+      onFrame = do
+        SDL.present renderer
 
-      events <- SDL.pollEvents
-      let quit = any isQuitEvent events
-      pure quit
+        n <- readIORef frameCounter
+        writeIORef frameCounter (n+1)
+        --putOut "."
+        -- every 60 frames, display fps achieved
+        when (n `mod` 60 == 0) $ do
+          t1 <- readIORef lastTicks
+          t2 <- SDL.ticks
+          writeIORef lastTicks t2
+          let actualDuration :: Double = fromIntegral $ max (t2 - t1) 1
+          let fpsAchieved = 60 * 1000 / actualDuration
+          putOut $ printf "[%.0g]" fpsAchieved
 
-  let graphics = PPU.Graphics
+        events <- SDL.pollEvents
+        let quit = any isQuitEvent events
+        let tab = any isTabEvent events
+        pure (quit,tab)
+
+    ppuState <- PPU.initState mapper
+
+    let
+      graphics = PPU.Graphics
         { plot = onPlot
         , displayFrame = \_ -> do
-            quit <- IO onFrame
+            (quit,tab) <- IO onFrame
             if quit then Halt else pure ()
+            if tab then PPU.changeMode ppuState else pure ()
         }
-  let system = makeSystem config mapper graphics
-  runEffect system
+
+    makeSystem config mapper ppuState graphics
+
 
   putOut "\n"
   SDL.destroyRenderer renderer
@@ -103,5 +111,15 @@ isQuitEvent = \case
     case (code,motion) of
       (SDL.KeycodeEscape,SDL.Pressed) -> True
       (SDL.KeycodeQ,SDL.Pressed) -> True
+      _ -> False
+  _ -> False
+
+isTabEvent :: SDL.Event -> Bool
+isTabEvent = \case
+  SDL.Event _ (SDL.KeyboardEvent ke) -> do
+    let code = SDL.keysymKeycode (SDL.keyboardEventKeysym ke)
+    let motion = SDL.keyboardEventKeyMotion ke
+    case (code,motion) of
+      (SDL.KeycodeTab,SDL.Pressed) -> True
       _ -> False
   _ -> False

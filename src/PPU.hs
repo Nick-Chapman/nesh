@@ -1,5 +1,5 @@
 module PPU
-  ( State, initState --, readPosition
+  ( State, initState, changeMode --, readPosition
   , makeRegisters
   , ppu
   , makePpuBus
@@ -9,7 +9,7 @@ module PPU
 import Control.Monad (when,forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read) --,write,update)
+import Framework (Eff(..),Ref(..),read,update)
 import Mapper (Mapper)
 import Mapper qualified (busPPU)
 import Prelude hiding (read)
@@ -17,26 +17,20 @@ import SDL (V4(..))
 import Text.Printf (printf)
 import Types (Addr,U8,RGB)
 
-data What = Gradient | ViewTiles
-
-ppu :: State -> Eff ()
-ppu state = do
-  let what = ViewTiles -- select here
-  case what of
-    Gradient -> testGradient state
-    ViewTiles ->  viewTiles state
-
-viewTiles :: State -> Eff ()
-viewTiles ppuState = loop 0
+ppu :: State -> Graphics -> Eff ()
+ppu state@State{mode} graphics = loop 0
   where
-    State{graphics=Graphics{plot,displayFrame}} = ppuState
-
+    Graphics{displayFrame} = graphics
     loop frame = do
-      oneFrame
-      AdvancePPU (341 * 260)
+      read mode >>= \case
+        Gradient -> testGradient graphics frame
+        ViewTiles -> viewTiles state graphics
       displayFrame frame
       loop (frame+1)
 
+viewTiles :: State -> Graphics -> Eff ()
+viewTiles state Graphics{plot} = oneFrame
+  where
     oneFrame = do
       let scale = 2
       let scaledSize = 8 * scale
@@ -45,7 +39,7 @@ viewTiles ppuState = loop 0
         let startX = tileId `mod` tilesPerRow * scaledSize
         let startY = tileId `div` tilesPerRow * scaledSize
         forM_ [0..7] $ \y -> do
-          tile <- makeTile ppuState False tileId (fromIntegral y)
+          tile <- makeTile state False tileId (fromIntegral y)
           forM_ [0..7] $ \x -> do
             let col = lookupPalette testPalette (getColourIndex tile (fromIntegral x))
             forM_ [0..scale-1] $ \yy -> do
@@ -54,18 +48,18 @@ viewTiles ppuState = loop 0
                   (fromIntegral $ startX + x * scale + xx)
                   (fromIntegral $ startY + y * scale + yy)
                   col
+      AdvancePPU (341 * 260)
 
 
-testGradient :: State -> Eff ()
-testGradient state = loop 0
+testGradient :: Graphics -> Int -> Eff ()
+testGradient Graphics{plot} = oneFrame
 -- In total, we have 262 (1+240+21) lines y:[-1..260]
 --   One pre-visible line, y:-1
 --   240 visible lines, y:[0..239]
 --   21 post-visible lines, y:[240..260]
   where
-    State{graphics=Graphics{plot,displayFrame}} = state
 
-    loop frame = do
+    oneFrame frame = do
       AdvancePPU 341
       forM_ [0..239] $ \y -> do
         forM_ [0..255] $ \x -> do
@@ -73,8 +67,6 @@ testGradient state = loop 0
           plot x y col
         AdvancePPU 341
       AdvancePPU (21 * 341)
-      displayFrame frame
-      loop (frame+1)
 
     gradientCol :: CInt -> CInt -> CInt -> RGB
     gradientCol frame x y = do
@@ -132,13 +124,24 @@ makePpuBus mapper = do
 
 data State = State -- TODO: rename Context (because value never changes!)
   { bus :: Addr -> Ref U8
-  , graphics :: Graphics
+  , mode :: Ref Mode -- TDO: split out as Emu Control
   }
 
-initState :: Mapper -> Graphics -> Eff State
-initState mapper graphics = do
+initState :: Mapper -> Eff State
+initState mapper = do
   bus <- makePpuBus mapper
-  pure State {bus,graphics}
+  mode <- DefineRegister Gradient
+  pure State {bus,mode}
+
+changeMode :: State -> Eff ()
+changeMode State{mode} = update nextMode mode
+
+data Mode = Gradient | ViewTiles
+
+nextMode :: Mode -> Mode -- TODO: do via enum
+nextMode = \case
+  Gradient -> ViewTiles
+  ViewTiles -> Gradient
 
 ----------------------------------------------------------------------
 -- Graphics
