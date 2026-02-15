@@ -30,7 +30,9 @@ main system = do
 
   let windowSize = V2 (scale screenW) (scale screenH)
 
-  let winConfig = SDL.defaultWindow { SDL.windowInitialSize = windowSize }
+  let winConfig = SDL.defaultWindow { SDL.windowInitialSize = windowSize
+                                    , SDL.windowPosition = SDL.Absolute (SDL.P (SDL.V2 1000 100))
+                                    }
   win <- SDL.createWindow (Text.pack "Dishonesty") $ winConfig
   renderer <- SDL.createRenderer win (-1) SDL.defaultRenderer
 
