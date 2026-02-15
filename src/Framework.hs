@@ -10,6 +10,7 @@ import Data.Ord (comparing)
 import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStr)
+import Text.Printf (printf)
 import Types (U8)
 
 ----------------------------------------------------------------------
@@ -40,6 +41,7 @@ data Eff a where
   Bind :: Eff a -> (a -> Eff b) -> Eff b
   Halt :: Eff ()
   Log :: String -> Eff ()
+  Error :: String -> Eff a
   IO :: IO a -> Eff a
   DefineRegister :: a -> Eff (Ref a)
   DefineMemory :: Int -> Eff (Int -> Ref U8)
@@ -62,6 +64,10 @@ runEffect eff0 = loop s0 eff0 k0
       Log message -> do
         putOut message
         k () s
+
+      Error message -> do
+        putOut (printf "ERROR: %s\n" message)
+        pure ()
 
       IO io -> do
         x <- io

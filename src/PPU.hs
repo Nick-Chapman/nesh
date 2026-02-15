@@ -7,16 +7,16 @@ module PPU
   , Graphics(..)
   ) where
 
-import Control.Monad (when,forM_)
+import Control.Monad (forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read)
+import Framework (Eff(..),Ref(..),read,write)
 import Mapper (Mapper)
 import Mapper qualified (busPPU)
 import Prelude hiding (read)
 import SDL (V4(..))
 import Text.Printf (printf)
-import Types (Addr,U8,RGB)
+import Types (Addr,U8,RGB,HL(..),makeAddr,splitAddr)
 
 ----------------------------------------------------------------------
 -- Graphics
@@ -119,28 +119,105 @@ gradientCol frame x y = do
 
 makeRegisters :: State -> Bus
 makeRegisters s = do
-  let ppuCtrl = makeRegister s "PPUCTRL"
-  let ppuStatus = makeRegister s "PPUSTATUS"
   \a -> do
     if
-      | a == 0x2000 -> ppuCtrl
-      | a == 0x2002 -> ppuStatus
+      | a == 0x2000 -> ppuCtrl s
+      | a == 0x2001 -> ppuMask s
+      | a == 0x2002 -> ppuStatus s
+
+      | a == 0x2005 -> ppuScroll s
+      | a == 0x2006 -> ppuAddr s
+      | a == 0x2007 -> ppuData s
 
       | otherwise ->
         error $ printf "PPU.makeRegisters: address = $%04X" a
 
-makeRegister :: State -> String -> Ref U8
-makeRegister State{} name = Ref {onRead,onWrite}
+ppuCtrl :: State -> Ref U8
+ppuCtrl State{ctrl} = Ref {onRead,onWrite}
   where
-    log = False
+    name = "ppuCtrl"
     onRead = do
-      let v = 0
-      when log $ Log $ printf "%s: read -> %02x" name v
+      v <- read ctrl
+      Log $ printf "%s: read -> %02x\n" name v
       pure v
-
     onWrite v = do
-      when log $ Log $ printf "%s: write %02x" name v
-      pure ()
+      Log $ printf "%s: write %02x\n" name v
+      write ctrl v
+
+ppuStatus :: State -> Ref U8
+ppuStatus State{status} = Ref {onRead,onWrite}
+  where
+    name = "ppuStatus"
+    onRead = do
+      v <- read status
+      Log $ printf "%s: read -> %02x\n" name v
+      pure v
+    onWrite v = do
+      Log $ printf "%s: write %02x\n" name v
+      write status v
+
+ppuMask :: State -> Ref U8
+ppuMask State{mask} = Ref {onRead,onWrite}
+  where
+    name = "ppuMask"
+    onRead = do
+      v <- read mask
+      Log $ printf "%s: read -> %02x\n" name v
+      pure v
+    onWrite v = do
+      Log $ printf "%s: write %02x\n" name v
+      write mask v
+
+ppuScroll :: State -> Ref U8
+ppuScroll State{scroll} = Ref {onRead,onWrite}
+  where
+    name = "ppuScroll"
+    onRead = do
+      v <- read scroll
+      Log $ printf "%s: read -> %02x\n" name v
+      pure v
+    onWrite v = do
+      Log $ printf "%s: write %02x\n" name v
+      write scroll v
+
+ppuAddr :: State -> Ref U8
+ppuAddr State{addrHI,addrLO,latch} = Ref {onRead,onWrite}
+  where
+    name = "ppuAddr"
+    onRead = Error $ printf "%s: read\n" name
+    onWrite v = do
+      latchV <- read latch
+      Log $ printf "%s: write (latch:%s) %02x\n" name (show latchV) v
+      write latch (not latchV)
+      case latchV of
+        True -> write addrLO v
+        False -> write addrHI v
+
+getAddr :: State -> Eff Addr
+getAddr State{addrHI,addrLO} = do
+  lo <- read addrLO
+  hi <- read addrHI
+  pure $ makeAddr HL { hi, lo }
+
+incrementAddr :: State -> Eff ()
+incrementAddr State{addrHI,addrLO} = do
+  let inc = 1 -- TODO: 1 or 32
+  lo <- read addrLO
+  hi <- read addrHI
+  let a = makeAddr HL { hi, lo }
+  let HL{hi,lo} = splitAddr (a + inc)
+  write addrHI hi
+  write addrLO lo
+
+ppuData :: State -> Ref U8
+ppuData s@State{bus} = Ref {onRead,onWrite}
+  where
+    onRead = Error "ppuData/read"
+    onWrite v = do
+      a <- getAddr s
+      --Log $ (printf "ppuData (write) addr (%04x) = %02x\n" a v)
+      write (bus a) v
+      incrementAddr s
 
 ----------------------------------------------------------------------
 -- PPU Bus
@@ -149,13 +226,17 @@ type Bus = (Addr -> Ref U8)
 
 makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
 makePpuBus mapper = do
+  vram <- DefineMemory 4096 -- TODO: really only 2K, with mirroring
   pure $ \a -> do
     if
       | a <= 0x1fff
         -> Mapper.busPPU mapper a
 
+      | a >= 0x2000 && a <= 0x2fff
+        -> vram (fromIntegral a - 0x2000)
+
       | otherwise -> do
-        error $ printf "makePpuBus: address = $%04X" a
+        error $ printf "PpuBus: unknown address = $%04X" a
 
 ----------------------------------------------------------------------
 -- PPU State
@@ -163,13 +244,29 @@ makePpuBus mapper = do
 data State = State -- TODO: rename Context (because value never changes!)
   { bus :: Addr -> Ref U8
 --  , mode :: Ref Mode -- TDO: split out as Emu Control
+  , ctrl :: Ref U8
+  , status :: Ref U8
+  , mask :: Ref U8
+  , scroll :: Ref U8
+
+  , latch :: Ref Bool
+  , addrHI :: Ref U8 -- TODO: better to have one register with full 16bit address
+  , addrLO :: Ref U8
   }
 
 initState :: Mapper -> Eff State
 initState mapper = do
   bus <- makePpuBus mapper
 --  mode <- DefineRegister Gradient
-  pure State {bus}
+  ctrl <- DefineRegister 0 -- ???
+  status <- DefineRegister 0x80 -- ???
+  mask <- DefineRegister 0
+  scroll <- DefineRegister 0
+
+  latch <- DefineRegister False
+  addrHI <- DefineRegister 0
+  addrLO <- DefineRegister 0
+  pure State {bus,ctrl,status,mask,scroll,latch,addrHI,addrLO}
 
 ----------------------------------------------------------------------
 -- Palette
