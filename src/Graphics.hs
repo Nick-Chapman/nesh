@@ -5,9 +5,11 @@ import CommandLine (Config)
 import Control.Monad (when)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),runEffect)
+import Framework (Eff(..),runEffect,update,read)
 import Mapper (Mapper)
-import PPU qualified (Graphics(..),changeMode,initState)
+import PPU (initMode,nextMode)
+import PPU qualified (Graphics(..),initState)
+import Prelude hiding (read)
 import SDL (V2(..),V4(..),($=))
 import System (makeSystem)
 import System.IO (hFlush,stdout,hPutStr)
@@ -44,13 +46,16 @@ main config mapper = do
   SDL.present renderer
 
   lastTicks <- SDL.ticks >>= newIORef
-  frameCounter <- newIORef (0::Int)
-
   let
-    setTitle :: String -> IO ()
-    setTitle str = SDL.windowTitle win $= (Text.pack str)
+    durationSinceLastAsk :: IO Double
+    durationSinceLastAsk = do
+      t1 <- readIORef lastTicks
+      t2 <-  SDL.ticks
+      writeIORef lastTicks t2
+      pure $ fromIntegral $ max (t2-t1) 1
 
   runEffect $ do
+    mode <- DefineRegister initMode
     let
       onPlot :: CInt -> CInt -> RGB -> Eff ()
       onPlot x0 y0 col = IO $ do
@@ -60,42 +65,32 @@ main config mapper = do
         let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
         SDL.fillRect renderer (Just rect)
 
-      onFrame :: Int -> IO (Bool,Bool)
-      onFrame frame = do
-        SDL.present renderer
-
-        n <- readIORef frameCounter
-        writeIORef frameCounter (n+1)
-        --putOut "."
-        -- every 60 frames, display fps achieved
-        when (n `mod` 60 == 0) $ do
-          t1 <- readIORef lastTicks
-          t2 <- SDL.ticks
-          writeIORef lastTicks t2
-          let actualDuration :: Double = fromIntegral $ max (t2 - t1) 1
-          let fpsAchieved = 60 * 1000 / actualDuration
-          let fpsString = printf "[%.0g]" fpsAchieved
-          putOut $ fpsString
-          setTitle (printf "Dishonesty: frame=%d, fps=%s" frame fpsString)
-
-        events <- SDL.pollEvents
+      displayFrame :: Int -> Eff ()
+      displayFrame frame = do
+        let titleUpdateFrames = 10
+        do
+          when (frame `mod` titleUpdateFrames == 0) $ do
+            actualDuration <- IO $ durationSinceLastAsk
+            let fpsAchieved = fromIntegral titleUpdateFrames * 1000 / actualDuration
+            mode <- read mode
+            let title = printf "Dishonesty (%s) fps=[%.0g]" (show mode) fpsAchieved
+            IO (SDL.windowTitle win $= Text.pack title)
+        IO $ SDL.present renderer
+        events <- IO $ SDL.pollEvents
         let quit = any isQuitEvent events
         let tab = any isTabEvent events
-        pure (quit,tab)
-
-    ppuState <- PPU.initState mapper
+        if quit then Halt else pure ()
+        if tab then update nextMode mode else pure ()
 
     let
       graphics = PPU.Graphics
         { plot = onPlot
-        , displayFrame = \frame -> do
-            (quit,tab) <- IO (onFrame frame)
-            if quit then Halt else pure ()
-            if tab then PPU.changeMode ppuState else pure ()
+        , displayFrame
+        , mode
         }
 
+    ppuState <- PPU.initState mapper
     makeSystem config mapper ppuState graphics
-
 
   putOut "\n"
   SDL.destroyRenderer renderer

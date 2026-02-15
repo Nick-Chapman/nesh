@@ -1,15 +1,16 @@
 module PPU
-  ( State, initState, changeMode --, readPosition
+  ( State, initState
   , makeRegisters
   , ppu
   , makePpuBus
+  , Mode, initMode, nextMode
   , Graphics(..)
   ) where
 
 import Control.Monad (when,forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read,update)
+import Framework (Eff(..),Ref(..),read)
 import Mapper (Mapper)
 import Mapper qualified (busPPU)
 import Prelude hiding (read)
@@ -17,16 +18,41 @@ import SDL (V4(..))
 import Text.Printf (printf)
 import Types (Addr,U8,RGB)
 
+----------------------------------------------------------------------
+-- Graphics
+
+data Mode = Gradient1 | Gradient2 | ViewTiles
+  deriving (Eq,Enum,Bounded,Show)
+
+initMode :: Mode
+initMode = Gradient1
+
+nextMode :: Mode -> Mode
+nextMode s = if s == maxBound then minBound else succ s
+
+data Graphics = Graphics
+  { plot :: CInt -> CInt -> RGB -> Eff ()
+  , displayFrame :: Int -> Eff ()
+  , mode :: Ref Mode
+  }
+
+----------------------------------------------------------------------
+-- ppu
+
 ppu :: State -> Graphics -> Eff ()
-ppu state@State{mode} graphics = loop 0
+ppu state@State{} graphics = loop 0
   where
-    Graphics{displayFrame} = graphics
+    Graphics{mode,displayFrame} = graphics
     loop frame = do
       read mode >>= \case
-        Gradient -> testGradient graphics frame
+        Gradient1 -> testGradient1 graphics frame
+        Gradient2 -> testGradient2 graphics frame
         ViewTiles -> viewTiles state graphics
       displayFrame frame
       loop (frame+1)
+
+----------------------------------------------------------------------
+-- view-tiles
 
 viewTiles :: State -> Graphics -> Eff ()
 viewTiles state Graphics{plot} = oneFrame
@@ -50,31 +76,43 @@ viewTiles state Graphics{plot} = oneFrame
                   col
       AdvancePPU (341 * 260)
 
+----------------------------------------------------------------------
+-- shifting gradient test pattern...
 
-testGradient :: Graphics -> Int -> Eff ()
-testGradient Graphics{plot} = oneFrame
 -- In total, we have 262 (1+240+21) lines y:[-1..260]
 --   One pre-visible line, y:-1
 --   240 visible lines, y:[0..239]
 --   21 post-visible lines, y:[240..260]
-  where
+testGradient1 :: Graphics -> Int -> Eff ()
+testGradient1 Graphics{plot} frame = do
+  AdvancePPU 341
+  forM_ [0..239] $ \y -> do
+    forM_ [0..255] $ \x -> do
+      let col = gradientCol (fromIntegral frame) x y
+      plot x y col
+    AdvancePPU 341
+  AdvancePPU (21 * 341)
 
-    oneFrame frame = do
-      AdvancePPU 341
-      forM_ [0..239] $ \y -> do
-        forM_ [0..255] $ \x -> do
-          let col = gradientCol (fromIntegral frame) x y
-          plot x y col
-        AdvancePPU 341
-      AdvancePPU (21 * 341)
+-- v2: Consolidate AdvancePPU calls.
+-- Would have expected this to be quicker. BUT IT IS NOT!
+-- In fact nearly half the speed. Very confused. Why is this??
+-- Update: ("Strict" and -O1) -- 67fps; stable MEM% 0.2
+-- So, we still ahve a puzzle. Why is this slower than v1 ?
+testGradient2 :: Graphics -> Int -> Eff ()
+testGradient2 Graphics{plot} frame = do
+  forM_ [0..239] $ \y -> do
+    forM_ [0..255] $ \x -> do
+      let col = gradientCol (fromIntegral frame) x y
+      plot x y col
+  AdvancePPU (262 * 341)
 
-    gradientCol :: CInt -> CInt -> CInt -> RGB
-    gradientCol frame x y = do
-      let r = fromIntegral (y + frame)
-      let g = 0
-      let b = fromIntegral (x + frame)
-      V4 r g b 255
 
+gradientCol :: CInt -> CInt -> CInt -> RGB
+gradientCol frame x y = do
+  let r = fromIntegral (y + frame)
+  let g = 0
+  let b = fromIntegral (x + frame)
+  V4 r g b 255
 
 ----------------------------------------------------------------------
 -- registers
@@ -124,32 +162,14 @@ makePpuBus mapper = do
 
 data State = State -- TODO: rename Context (because value never changes!)
   { bus :: Addr -> Ref U8
-  , mode :: Ref Mode -- TDO: split out as Emu Control
+--  , mode :: Ref Mode -- TDO: split out as Emu Control
   }
 
 initState :: Mapper -> Eff State
 initState mapper = do
   bus <- makePpuBus mapper
-  mode <- DefineRegister Gradient
-  pure State {bus,mode}
-
-changeMode :: State -> Eff ()
-changeMode State{mode} = update nextMode mode
-
-data Mode = Gradient | ViewTiles
-
-nextMode :: Mode -> Mode -- TODO: do via enum
-nextMode = \case
-  Gradient -> ViewTiles
-  ViewTiles -> Gradient
-
-----------------------------------------------------------------------
--- Graphics
-
-data Graphics = Graphics
-  { plot :: CInt -> CInt -> RGB -> Eff ()
-  , displayFrame :: Int -> Eff ()
-  }
+--  mode <- DefineRegister Gradient
+  pure State {bus}
 
 ----------------------------------------------------------------------
 -- Palette
