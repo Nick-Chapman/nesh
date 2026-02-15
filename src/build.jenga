@@ -5,7 +5,7 @@ executable-name:
 include ../../jenga/rulelib/haskell.jenga
 
 main-entry:
-  echo CommandLine > $out
+  echo Start > $out
 
 ghc-version:
   echo 9.10.3 > $out

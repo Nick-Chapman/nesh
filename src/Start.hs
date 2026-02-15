@@ -1,4 +1,4 @@
-module CommandLine (main) where
+module Start (main) where
 
 import Bus (makeCpuBus)
 import CHR qualified (ROM)
