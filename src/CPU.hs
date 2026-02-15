@@ -4,29 +4,23 @@ module CPU
     cpu
   ) where
 
+import CommandLine(Config(..))
 import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
 import Framework (Eff(..),Ref(..),write,read,update)
+import PPU qualified (State) --,readPosition) -- so we can peek at x/y in the logging
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr)
 
-import PPU qualified (State) --,readPosition) -- so we can peek at x/y in the logging
-
 ----------------------------------------------------------------------
 -- cpu
-
-data Config = Config
-  { trace :: Bool
-  , stop_at :: Maybe Int
-  , init_pc :: Maybe Addr
-  }
 
 type Bus = (Addr -> Ref U8)
 
 cpu :: Config -> State -> PPU.State -> Eff ()
-cpu config@Config{trace} s ppuState = do
+cpu config@Config{trace_cpu} s ppuState = do
   initialize config s
   loop 1 s
   where
@@ -45,7 +39,7 @@ cpu config@Config{trace} s ppuState = do
       (addr,eff) <- doMode s instruction mode withArg
 
       -- execute
-      when (trace) $ logCpuInstruction s instruction mode addr ppuState
+      when (trace_cpu) $ logCpuInstruction s instruction mode addr ppuState
       update (+ (1 + sizeMode mode)) ip
       eff
 
