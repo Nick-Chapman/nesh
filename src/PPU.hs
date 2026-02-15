@@ -5,11 +5,12 @@ module PPU
   , makePpuBus
   ) where
 
-import CHR qualified (ROM,read)
 import Control.Monad (when,forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read) --,write,update)
+import Mapper (Mapper)
+import Mapper qualified (busPPU)
 import Prelude hiding (read)
 import SDL (V4(..))
 import Text.Printf (printf)
@@ -111,25 +112,15 @@ makeRegister State{} name = Ref {onRead,onWrite}
 
 type Bus = (Addr -> Ref U8)
 
-makePpuBus :: CHR.ROM -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
-makePpuBus chr = do
+makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
+makePpuBus mapper = do
   pure $ \a -> do
     if
       | a <= 0x1fff
-        -> readCHR chr a
+        -> Mapper.busPPU mapper a
 
       | otherwise -> do
         error $ printf "makePpuBus: address = $%04X" a
-
-
-readCHR :: CHR.ROM -> Addr -> Ref U8
-readCHR chr a = readonly (CHR.read chr a)
-  where
-    readonly :: U8 -> Ref U8
-    readonly byte =
-      Ref { onRead = pure byte
-          , onWrite = \v -> error (show ("readonly/onWrite",a,v))
-          }
 
 ----------------------------------------------------------------------
 -- PPU State
@@ -138,9 +129,9 @@ data State = State
   { bus :: Addr -> Ref U8
   }
 
-initState :: CHR.ROM -> Eff State
-initState chr = do
-  bus <- makePpuBus chr
+initState :: Mapper -> Eff State
+initState mapper = do
+  bus <- makePpuBus mapper
   pure State {bus}
 
 ----------------------------------------------------------------------
