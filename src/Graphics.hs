@@ -44,10 +44,13 @@ main config mapper = do
   SDL.present renderer
 
   lastTicks <- SDL.ticks >>= newIORef
-  frameCounter <- newIORef (1::Int)
+  frameCounter <- newIORef (0::Int)
+
+  let
+    setTitle :: String -> IO ()
+    setTitle str = SDL.windowTitle win $= (Text.pack str)
 
   runEffect $ do
-
     let
       onPlot :: CInt -> CInt -> RGB -> Eff ()
       onPlot x0 y0 col = IO $ do
@@ -57,8 +60,8 @@ main config mapper = do
         let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
         SDL.fillRect renderer (Just rect)
 
-      onFrame :: IO (Bool,Bool)
-      onFrame = do
+      onFrame :: Int -> IO (Bool,Bool)
+      onFrame frame = do
         SDL.present renderer
 
         n <- readIORef frameCounter
@@ -71,7 +74,9 @@ main config mapper = do
           writeIORef lastTicks t2
           let actualDuration :: Double = fromIntegral $ max (t2 - t1) 1
           let fpsAchieved = 60 * 1000 / actualDuration
-          putOut $ printf "[%.0g]" fpsAchieved
+          let fpsString = printf "[%.0g]" fpsAchieved
+          putOut $ fpsString
+          setTitle (printf "Dishonesty: frame=%d, fps=%s" frame fpsString)
 
         events <- SDL.pollEvents
         let quit = any isQuitEvent events
@@ -83,8 +88,8 @@ main config mapper = do
     let
       graphics = PPU.Graphics
         { plot = onPlot
-        , displayFrame = \_ -> do
-            (quit,tab) <- IO onFrame
+        , displayFrame = \frame -> do
+            (quit,tab) <- IO (onFrame frame)
             if quit then Halt else pure ()
             if tab then PPU.changeMode ppuState else pure ()
         }
