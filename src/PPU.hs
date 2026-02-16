@@ -2,7 +2,6 @@ module PPU
   ( State, initState
   , makeRegisters
   , ppu
-  , makePpuBus
   , Mode, initMode, nextMode
   , Graphics(..)
   ) where
@@ -10,7 +9,7 @@ module PPU
 import Control.Monad (when,forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read,write)
+import Framework (Eff(..),Ref(..),read,write,Bus)
 import Mapper (Mapper)
 import Mapper qualified (busPPU)
 import Prelude hiding (read)
@@ -125,7 +124,7 @@ testGradient Graphics{plot} frame = do
 
 makeRegisters :: State -> Bus
 makeRegisters s = do
-  \a -> do
+  \a -> pure $ do
     if
       | a == 0x2000 -> ppuCtrl s
       | a == 0x2001 -> ppuMask s
@@ -148,7 +147,7 @@ ppuCtrl State{ctrl} = Ref {onRead,onWrite}
       pure v
     onWrite v = do
       Log $ printf "%s: write %02x\n" name v
-      write ctrl v
+      write v ctrl
 
 ppuStatus :: State -> Ref U8
 ppuStatus State{status} = Ref {onRead,onWrite}
@@ -160,7 +159,7 @@ ppuStatus State{status} = Ref {onRead,onWrite}
       pure v
     onWrite v = do
       Log $ printf "%s: write %02x\n" name v
-      write status v
+      write v status
 
 ppuMask :: State -> Ref U8
 ppuMask State{mask} = Ref {onRead,onWrite}
@@ -172,7 +171,7 @@ ppuMask State{mask} = Ref {onRead,onWrite}
       pure v
     onWrite v = do
       Log $ printf "%s: write %02x\n" name v
-      write mask v
+      write v mask
 
 ppuScroll :: State -> Ref U8
 ppuScroll State{scroll} = Ref {onRead,onWrite}
@@ -184,7 +183,7 @@ ppuScroll State{scroll} = Ref {onRead,onWrite}
       pure v
     onWrite v = do
       Log $ printf "%s: write %02x\n" name v
-      write scroll v
+      write v scroll
 
 ppuAddr :: State -> Ref U8
 ppuAddr State{addrHI,addrLO,latch} = Ref {onRead,onWrite}
@@ -194,10 +193,10 @@ ppuAddr State{addrHI,addrLO,latch} = Ref {onRead,onWrite}
     onWrite v = do
       latchV <- read latch
       Log $ printf "%s: write (latch:%s) %02x\n" name (show latchV) v
-      write latch (not latchV)
+      write (not latchV) latch
       case latchV of
-        True -> write addrLO v
-        False -> write addrHI v
+        True -> write v addrLO
+        False -> write v addrHI
 
 getAddr :: State -> Eff Addr
 getAddr State{addrHI,addrLO} = do
@@ -212,8 +211,8 @@ incrementAddr State{addrHI,addrLO} = do
   hi <- read addrHI
   let a = makeAddr HL { hi, lo }
   let HL{hi,lo} = splitAddr (a + inc)
-  write addrHI hi
-  write addrLO lo
+  write hi addrHI
+  write lo addrLO
 
 ppuData :: State -> Ref U8
 ppuData s@State{bus} = Ref {onRead,onWrite}
@@ -222,18 +221,16 @@ ppuData s@State{bus} = Ref {onRead,onWrite}
     onWrite v = do
       a <- getAddr s
       --Log $ (printf "ppuData (write) addr (%04x) = %02x\n" a v)
-      write (bus a) v
+      bus a >>= write v
       incrementAddr s
 
 ----------------------------------------------------------------------
 -- PPU Bus
 
-type Bus = (Addr -> Ref U8)
-
 makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
 makePpuBus mapper = do
   vram <- DefineMemory 4096 -- TODO: really only 2K, with mirroring
-  pure $ \a -> do
+  pure $ \a -> pure $ do
     if
       | a <= 0x1fff
         -> Mapper.busPPU mapper a
@@ -248,7 +245,7 @@ makePpuBus mapper = do
 -- PPU State
 
 data State = State -- TODO: rename Context (because value never changes!)
-  { bus :: Addr -> Ref U8
+  { bus :: Bus
 --  , mode :: Ref Mode -- TDO: split out as Emu Control
   , ctrl :: Ref U8
   , status :: Ref U8
@@ -314,8 +311,8 @@ makeTile State{bus} patternTableId tileId y = do
   let tableAddr = if patternTableId then 0x1000 else 0x0000
   let loPlaneAddr = tableAddr + fromIntegral tileId * 16
   let hiPlaneAddr = loPlaneAddr + 8
-  loRow <- read (bus (loPlaneAddr + fromIntegral y))
-  hiRow <- read (bus (hiPlaneAddr + fromIntegral y))
+  loRow <- bus (loPlaneAddr + fromIntegral y) >>= read
+  hiRow <- bus (hiPlaneAddr + fromIntegral y) >>= read
   pure TileX {loRow,hiRow}
 
 getColourIndex :: Tile -> U8 -> ColourIndex

@@ -1,6 +1,7 @@
 module Framework
   ( Eff(..), runEffect
   , Ref(..), read, write, update
+  , Bus
   ) where
 
 import Control.Monad (ap,liftM)
@@ -11,7 +12,7 @@ import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
 import Prelude hiding (read)
 import System.IO (stdout,hFlush,hPutStr)
 import Text.Printf (printf)
-import Types (U8)
+import Types (U8,Addr)
 
 ----------------------------------------------------------------------
 -- Ref
@@ -21,13 +22,15 @@ data Ref a = Ref { onRead :: Eff a, onWrite :: a -> Eff () }
 read :: Ref a -> Eff a
 read Ref{onRead} = onRead
 
-write :: Ref a -> a -> Eff ()
-write Ref{onWrite} = onWrite
+write :: a -> Ref a -> Eff ()
+write v Ref{onWrite} = onWrite v
 
 update :: (a -> a) -> Ref a -> Eff ()
 update f r = do
   v <- read r
-  write r (f v)
+  write (f v) r
+
+type Bus = (Addr -> Eff (Ref U8))
 
 ----------------------------------------------------------------------
 -- effect

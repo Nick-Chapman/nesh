@@ -9,7 +9,7 @@ import CommandLine(Config(..))
 import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
-import Framework (Eff(..),Ref(..),write,read,update)
+import Framework (Eff(..),Ref(..),write,read,update,Bus)
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr)
@@ -26,8 +26,6 @@ trigger _state interrupt = do
 ----------------------------------------------------------------------
 -- cpu
 
-type Bus = (Addr -> Ref U8)
-
 cpu :: Config -> State -> Eff ()
 cpu config@Config{trace_cpu} s = do
   initialize config s
@@ -42,7 +40,7 @@ cpu config@Config{trace_cpu} s = do
       pc <- read ip
 
       -- fetch/decode
-      opcode <- read (bus pc)
+      opcode <- bus pc >>= read
       let (instruction,baseCycles,mode) = decode opcode
       let withArg = executeInstruction s instruction
       (addr,eff) <- doMode s instruction mode withArg
@@ -61,17 +59,17 @@ initialize :: Config -> State -> Eff ()
 initialize Config{init_pc} s@State{ip} =
   case init_pc of
     Just addr -> do
-      write ip addr  -- used by jenga test-nestest
+      write addr ip  -- used by jenga test-nestest
       advanceCPU s 7
     Nothing ->
       jumpResetVector s
 
 jumpResetVector :: State -> Eff ()
 jumpResetVector State{bus,ip} = do
-  lo <- read (bus 0xfffc)
-  hi <- read (bus 0xfffd)
+  lo <- bus 0xfffc >>= read
+  hi <- bus 0xfffd >>= read
   let addr = makeAddr HL { lo, hi }
-  write ip addr
+  write addr ip
 
 maybeHalt :: Config -> State -> Eff ()
 maybeHalt Config{stop_at} State{cyc} = do
@@ -125,14 +123,14 @@ doMode s@State{bus,ip,a=accumulator} instruction mode = \case
         pc <- read ip
         let
           eff = do
-            byte <- read (bus (pc+1))
+            byte <- bus (pc+1) >>= read
             f byte
         pure (0{-undefined-},eff)
       _ -> do
         addr <- fetchArgs s instruction mode
         let
           eff = do
-            byte <- read (bus addr)
+            byte <- bus addr >>= read
             f byte
         pure (addr,eff)
   Arg2 f -> do
@@ -146,7 +144,7 @@ doMode s@State{bus,ip,a=accumulator} instruction mode = \case
         pure (0{-undefined-},eff)
       _ -> do
         addr <- fetchArgs s instruction mode
-        let eff = f (bus addr)
+        let eff = bus addr >>= f
         pure (addr,eff)
 
 
@@ -224,8 +222,8 @@ fetchArgs s@State{ip,x,y} instruction mode = case mode of
 
 indirect :: State -> Addr -> Eff Addr
 indirect State{bus} base = do
-  lo <- read (bus base)
-  hi <- read (bus $ nextAddrPageWrapped base)
+  lo <- bus base >>= read
+  hi <- bus (nextAddrPageWrapped base) >>= read
   pure $ makeAddr HL { hi, lo }
 
 nextAddrPageWrapped :: Addr -> Addr
@@ -241,13 +239,13 @@ immediateZeroPageAddr s = do
 immediateByte :: State -> Eff U8
 immediateByte State{bus,ip} = do
   pc <- read ip
-  read (bus (pc + 1))
+  bus (pc + 1) >>= read
 
 immediateAddr :: State -> Eff Addr
 immediateAddr State{bus,ip} = do
   pc <- read ip
-  lo <- read (bus (pc+1))
-  hi <- read (bus (pc+2))
+  lo <- bus (pc+1) >>= read
+  hi <- bus (pc+2) >>= read
   pure $ makeAddr HL {hi,lo}
 
 ----------------------------------------------------------------------
@@ -274,8 +272,8 @@ hasPageCrossPenalty = \case
 logCpuInstruction :: State -> Instruction -> Mode -> Addr -> Eff ()
 logCpuInstruction s@State{bus,ip} instruction mode addr = do
   pc <- read ip
-  opcode <- read (bus (pc))
-  args <- sequence [ read (bus (pc + fromIntegral i)) | i <- [ 1 .. sizeMode mode ] ]
+  opcode <- bus (pc) >>= read
+  args <- sequence [ bus (pc + fromIntegral i) >>= read | i <- [ 1 .. sizeMode mode ] ]
   let bytes = opcode:args
   let bytesS = intercalate " " (map (printf "%02X") bytes)
   let a = printf "%s  %s %s" (ljust 8 bytesS) (show instruction) (seeArgs (mode,args,addr))
@@ -316,7 +314,7 @@ data State = State
   , y :: Ref U8
   , flags :: Ref U8
   , sp :: Ref U8
-  , bus :: Addr -> Ref U8
+  , bus :: Bus
   , extraCycles :: Ref Int -- for the current instruction. reset to 0 when collected
   , cyc :: Ref Int -- total cpu cycles executed
   }
@@ -386,7 +384,7 @@ addExtraCycle State{extraCycles} = do
 collectExtraCycles :: State -> Eff Int
 collectExtraCycles State{extraCycles} = do
   n <- read extraCycles
-  write extraCycles 0
+  write 0 extraCycles
   pure n
 
 advanceCPU :: State -> Int -> Eff ()
@@ -454,7 +452,7 @@ executeInstruction s@State{ip,flags,x,y,a,sp} = \case
   TXA -> Arg0 $ do transfer s x a
   TYA -> Arg0 $ do transfer s y a
   TSX -> Arg0 $ do transfer s sp x
-  TXS -> Arg0 $ do read x >>= write sp -- no update Z/N
+  TXS -> Arg0 $ do v <- read x; write v sp -- no update Z/N
 
   PHA -> Arg0 $ do read a >>= push s
 
@@ -464,12 +462,12 @@ executeInstruction s@State{ip,flags,x,y,a,sp} = \case
 
   PLA -> Arg0 $ do
     v <- pop s
-    write a v
+    write v a
     updateZN s v
 
   PLP -> Arg0 $ do
     v <- pop s
-    write flags (setBit (clearBit v 4) 5)
+    write (setBit (clearBit v 4) 5) flags
 
   BIT -> Arg1 $ \val -> do
     a <- read a
@@ -499,22 +497,22 @@ executeInstruction s@State{ip,flags,x,y,a,sp} = \case
   BPL -> Arg2 $ do branchFlagClear s N
 
   JMP -> Arg2 $ \addr -> do
-    write ip addr
+    write addr ip
 
   JSR -> Arg2 $ \addr -> do
     pc <- read ip
     push16 s (pc-1)
-    write ip addr
+    write addr ip
 
   RTS -> Arg0 $ do
     pc <- pop16 s
-    write ip (pc+1)
+    write (pc+1) ip
 
   RTI -> Arg0 $ do
     v <- pop s
-    write flags (setBit (clearBit v 4) 5)
+    write (setBit (clearBit v 4) 5) flags
     pc <- pop16 s
-    write ip pc
+    write pc ip
 
   NOP -> Arg0 $
     pure ()
@@ -529,7 +527,7 @@ lsr s r = do
   old <- read r
   let new = old `shiftR` 1
   writeFlag s C (old `testBit` 0)
-  write r new
+  write new r
   updateZN s new
 
 ror :: State -> Ref U8 -> Eff ()
@@ -538,7 +536,7 @@ ror s r = do
   c <- readFlag s C
   let new = old `shiftR` 1 .|. if c then 128 else 0
   writeFlag s C (old `testBit` 0)
-  write r new
+  write new r
   updateZN s new
 
 asl :: State -> Ref U8 -> Eff ()
@@ -546,7 +544,7 @@ asl s r = do
   old <- read r
   let new = old `shiftL` 1
   writeFlag s C (old `testBit` 7)
-  write r new
+  write new r
   updateZN s new
 
 rol :: State -> Ref U8 -> Eff ()
@@ -555,7 +553,7 @@ rol s r = do
   c <- readFlag s C
   let new = old `shiftL` 1 .|. if c then 1 else 0
   writeFlag s C (old `testBit` 7)
-  write r new
+  write new r
   updateZN s new
 
 adc :: State -> U8 -> Eff ()
@@ -564,7 +562,7 @@ adc s@State{a} val = do
   c <- readFlag s C
   let result :: Int = fromIntegral old + fromIntegral val + if c then 1 else 0
   let new :: U8 = fromIntegral result
-  write a new
+  write new a
   updateZN s new
   writeFlag s C (result >= 256)
   writeFlag s V $
@@ -575,14 +573,14 @@ binop :: State -> (U8 -> U8 -> U8) -> U8 -> Eff ()
 binop s@State{a} f val = do
   old <- read a
   let new = f old val
-  write a new
+  write new a
   updateZN s new
 
 modify :: State -> Ref U8 -> (U8 -> U8) -> Eff ()
 modify s r f = do
   old <- read r
   let new = f old
-  write r new
+  write new r
   updateZN s new
 
 compare :: State -> Ref U8 -> U8 -> Eff ()
@@ -612,29 +610,29 @@ writeFlag State{flags} flag bool = do
 branchFlagSet :: State -> Flag -> Addr -> Eff ()
 branchFlagSet s@State{ip,flags} flag addr = do
   flags <- read flags
-  let eff = do write ip addr; addExtraCycle s
+  let eff = do write addr ip; addExtraCycle s
   when (testFlag flags flag) eff
 
 branchFlagClear :: State -> Flag -> Addr -> Eff ()
 branchFlagClear s@State{ip,flags} flag addr = do
   flags <- read flags
-  let eff = do write ip addr; addExtraCycle s
+  let eff = do write addr ip; addExtraCycle s
   when (not $ testFlag flags flag) eff
 
 load :: State -> Ref U8 -> U8 -> Eff ()
 load s r v = do
-  write r v
+  write v r
   updateZN s v
 
 store :: State -> Ref U8 -> Addr -> Eff ()
 store State{bus} r addr = do
   v <- read r
-  write (bus addr) v
+  bus addr >>= write v
 
 transfer :: State -> Ref U8 -> Ref U8 -> Eff ()
 transfer s from to = do
   v <- read from
-  write to v
+  write v to
   updateZN s v
 
 push16 :: State -> Addr -> Eff ()
@@ -654,14 +652,14 @@ push State{sp,bus} v = do
   lo <- read sp
   let a = makeAddr HL { hi = 0x1, lo }
   decrement sp
-  write (bus a) v
+  bus a >>= write v
 
 pop :: State -> Eff U8
 pop State{sp,bus} = do
   increment sp
   lo <- read sp
   let a = makeAddr HL { hi = 0x1, lo }
-  read (bus a)
+  bus a >>= read
 
 increment :: Ref U8 -> Eff ()
 increment = update (+1)
