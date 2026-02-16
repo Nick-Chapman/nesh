@@ -9,7 +9,7 @@ module PPU
 import Control.Monad (when,forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read,write,Bus,dummyRef,dummyRef_quiet)
+import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busPPU)
 import Prelude hiding (read)
@@ -140,7 +140,6 @@ makeRegisters s = do
       | otherwise ->
         error $ printf "PPU.makeRegisters: address = $%04X" a
 
-
 ppuStatus :: State -> Ref U8
 ppuStatus State{status} = Ref {onRead,onWrite}
   where
@@ -153,82 +152,43 @@ ppuStatus State{status} = Ref {onRead,onWrite}
       Log $ printf "%s: write %02x" name v
       write v status
 
-{-
-ppuCtrl :: State -> Ref U8
-ppuCtrl State{ctrl} = Ref {onRead,onWrite}
-  where
-    name = "ppuCtrl"
-    onRead = do
-      v <- read ctrl
-      Log $ printf "%s: read -> %02x" name v
-      pure v
-    onWrite v = do
-      Log $ printf "%s: write %02x" name v
-      write v ctrl
-
-ppuMask :: State -> Ref U8
-ppuMask State{mask} = Ref {onRead,onWrite}
-  where
-    name = "ppuMask"
-    onRead = do
-      v <- read mask
-      Log $ printf "%s: read -> %02x" name v
-      pure v
-    onWrite v = do
-      Log $ printf "%s: write %02x" name v
-      write v mask
-
-ppuScroll :: State -> Ref U8
-ppuScroll State{scroll} = Ref {onRead,onWrite}
-  where
-    name = "ppuScroll"
-    onRead = do
-      v <- read scroll
-      Log $ printf "%s: read -> %02x" name v
-      pure v
-    onWrite v = do
-      Log $ printf "%s: write %02x" name v
-      write v scroll
--}
-
 ppuAddr :: State -> Ref U8
-ppuAddr State{addrHI,addrLO,latch} = Ref {onRead,onWrite}
+ppuAddr State{addr,latch} = Ref {onRead,onWrite}
   where
-    name = "ppuAddr"
-    onRead = Error $ printf "%s: read" name
+    onRead = Error "ppuAddr: read"
     onWrite v = do
       latchV <- read latch
-      --Log $ printf "%s: write (latch:%s) %02x" name (show latchV) v
       write (not latchV) latch
       case latchV of
-        True -> write v addrLO
-        False -> write v addrHI
-
-getAddr :: State -> Eff Addr
-getAddr State{addrHI,addrLO} = do
-  lo <- read addrLO
-  hi <- read addrHI
-  pure $ makeAddr HL { hi, lo }
-
-incrementAddr :: State -> Eff ()
-incrementAddr State{addrHI,addrLO} = do
-  let inc = 1 -- TODO: 1 or 32
-  lo <- read addrLO
-  hi <- read addrHI
-  let a = makeAddr HL { hi, lo }
-  let HL{hi,lo} = splitAddr (a + inc)
-  write hi addrHI
-  write lo addrLO
+        True -> writeLO v addr
+        False -> writeHI v addr
 
 ppuData :: State -> Ref U8
-ppuData s@State{bus} = Ref {onRead,onWrite}
+ppuData s@State{bus,addr} = Ref {onRead,onWrite}
   where
     onRead = Error "ppuData/read"
     onWrite v = do
-      a <- getAddr s
+      a <- read addr
       --Log $ (printf "ppuData (write) addr (%04x) = %02x" a v)
       bus a >>= write v
       incrementAddr s
+
+incrementAddr :: State -> Eff ()
+incrementAddr State{addr} = do
+  let inc = 1 -- TODO: 1 or 32
+  update (+inc) addr
+
+writeLO :: U8 -> Ref Addr -> Eff ()
+writeLO lo r = do
+  a <- read r
+  let HL{hi} = splitAddr a
+  write (makeAddr HL {hi,lo}) r
+
+writeHI :: U8 -> Ref Addr -> Eff ()
+writeHI hi r = do
+  a <- read r
+  let HL{lo} = splitAddr a
+  write (makeAddr HL {hi,lo}) r
 
 ----------------------------------------------------------------------
 -- PPU Bus
@@ -258,8 +218,7 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , status :: Ref U8
 
   , latch :: Ref Bool
-  , addrHI :: Ref U8 -- TODO: better to have one register with full 16bit address
-  , addrLO :: Ref U8
+  , addr :: Ref Addr
   }
 
 initState :: Mapper -> Eff State
@@ -268,9 +227,8 @@ initState mapper = do
   status <- DefineRegister 0x80 -- ???
 
   latch <- DefineRegister False
-  addrHI <- DefineRegister 0
-  addrLO <- DefineRegister 0
-  pure State {bus,status,latch,addrHI,addrLO}
+  addr <- DefineRegister 0
+  pure State {bus,status,latch,addr}
 
 ----------------------------------------------------------------------
 -- Palette
