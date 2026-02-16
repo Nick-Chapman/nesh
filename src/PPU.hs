@@ -7,7 +7,7 @@ module PPU
   ) where
 
 import Control.Monad (when,forM_)
-import Data.Bits (testBit,setBit,clearBit)
+import Data.Bits (testBit,setBit,clearBit,(.&.),shiftR)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
@@ -59,12 +59,12 @@ ppu triggerNMI state@State{} graphics = loop 0
 --   21 post-visible lines, y:[240..260]
 
 normalOperation :: Eff () -> State -> Graphics -> Eff ()
-normalOperation triggerNMI s graphics = do timing; viewTiles s graphics
+normalOperation triggerNMI s graphics = timing --do timing; viewTiles s graphics
   where
     timing = do
       forM_ [(-1)..261] $ \(y::Int) -> do
         when (y == -1) preVisibleLine
-        when (y >= 0 && y <= 239) visibleLine
+        when (y >= 0 && y <= 239) $ visibleLine y
         when (y == 241) vblankLine
         AdvancePPU 341
 
@@ -72,13 +72,34 @@ normalOperation triggerNMI s graphics = do timing; viewTiles s graphics
       setIsInVblankInterval s False
       pure ()
 
-    visibleLine = do
+    visibleLine y = do
+      renderScanLine s graphics y
       pure ()
 
     vblankLine = do
       setIsInVblankInterval s True
       gen <- generateNMIonVBlank s
       when gen $ triggerNMI
+
+
+renderScanLine :: State -> Graphics -> Int -> Eff ()
+renderScanLine s@State{bus,ctrl} Graphics{plot} y = do
+  ctrl <- read ctrl
+  let _nameTableId :: U8 = (ctrl .&. 0xC0) `shiftR` 6 -- TODO: what is wrong with this?
+  let nameTableId :: U8 = 0 -- But this works!
+  let nameTableLocation :: Addr = 0x2000 + (fromIntegral nameTableId * 1024)
+  let backgroundPatternTableId = ctrl `testBit` 4
+  forM_ [0 .. 31] $ \tileX -> do
+    let x = tileX * 8
+    let tileY = y `div` 8
+    let tileIndex = tileY * 32 + tileX
+    tileId <- bus (nameTableLocation + fromIntegral tileIndex) >>= read
+    let tileInsideY = y `mod` 8
+    tile <- makeTile s backgroundPatternTableId (fromIntegral tileId) (fromIntegral tileInsideY)
+    forM_ [0::Int ..7] $ \xx -> do
+      let colourIndex = getColourIndex tile (fromIntegral xx)
+      let col = lookupPalette grayPalette colourIndex
+      plot (fromIntegral $ x+xx) (fromIntegral y) col
 
 ----------------------------------------------------------------------
 -- view-tiles
@@ -96,14 +117,13 @@ viewTiles state Graphics{plot} = oneFrame
         forM_ [0..7] $ \y -> do
           tile <- makeTile state False tileId (fromIntegral y)
           forM_ [0..7] $ \x -> do
-            let col = lookupPalette testPalette (getColourIndex tile (fromIntegral x))
+            let col = lookupPalette grayPalette (getColourIndex tile (fromIntegral x))
             forM_ [0..scale-1] $ \yy -> do
               forM_ [0..scale-1] $ \xx -> do
                 plot
                   (fromIntegral $ startX + x * scale + xx)
                   (fromIntegral $ startY + y * scale + yy)
                   col
-      --AdvancePPU (341 * 260)
 
 ----------------------------------------------------------------------
 -- shifting gradient test pattern...
@@ -277,8 +297,8 @@ data Palette = Palette (ColourIndex -> Colour)
 lookupPalette :: Palette -> ColourIndex -> Colour
 lookupPalette (Palette f) = f
 
-testPalette :: Palette
-testPalette = Palette $ \case
+grayPalette :: Palette
+grayPalette = Palette $ \case
   I0 -> grey 0x00
   I1 -> grey 0x55
   I2 -> grey 0xAA

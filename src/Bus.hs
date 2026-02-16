@@ -1,7 +1,7 @@
 module Bus (Bus,makeCpuBus) where
 
 import Control.Monad (when)
-import Framework (Eff(..),Bus,dummyRef,dummyRef_quiet)
+import Framework (Eff(..),Bus,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busCPU)
 import Prelude hiding (read,and,compare)
@@ -23,7 +23,7 @@ makeCpuBus mapper ppuRegisterBus = do
 
       | a >= 0x4000 && a <= 0x4013 -> pure $ dummyRef_quiet "APU register" a
 
-      | a == 0x4015 -> pure $ dummyRef "APU status/control" a
+      | a == 0x4015 -> pure $ dummyRef_quiet "APU status/control" a
       | a == 0x4016 -> pure $ dummyRef_quiet "controller-port1" a
       | a == 0x4017 -> pure $ dummyRef_quiet "controller-port2" a
 
