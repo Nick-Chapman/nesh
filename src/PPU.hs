@@ -9,7 +9,7 @@ module PPU
 import Control.Monad (when,forM_)
 import Data.Bits (testBit,(.&.),(.|.))
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef,dummyRef_quiet)
+import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busPPU)
 import Prelude hiding (read)
@@ -224,9 +224,7 @@ writeHI hi r = do
 makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
 makePpuBus mapper = do
   vram <- DefineMemory 4096 -- TODO: really only 2K, with mirroring
-
-  let paletteRam = dummyRef "palete ram" -- TODO
-
+  paletteRam <- DefineMemory 32
   pure $ \a -> pure $ do
     if
       | a <= 0x1fff
@@ -241,7 +239,7 @@ makePpuBus mapper = do
         -> vram (fromIntegral a - 0x3000) -}
 
       -- palette ram
-      | a >= 0x3f00 && a <= 0x3f1f -> paletteRam (a - 0x3f00)
+      | a >= 0x3f00 && a <= 0x3f1f -> paletteRam (fromIntegral a - 0x3f00)
 
       {- palette ram mirrors -- TODO
       | a >= 0x3f20 && a <= 0x3fff

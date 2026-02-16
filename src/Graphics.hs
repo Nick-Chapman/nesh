@@ -67,6 +67,7 @@ main config mapper = do
 
       displayFrame :: Int -> Eff ()
       displayFrame frame = do
+        --Print $ ","
         let titleUpdateFrames = 10
         do
           when (frame `mod` titleUpdateFrames == 0) $ do
