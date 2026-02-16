@@ -126,7 +126,7 @@ makeRegisters :: State -> Bus
 makeRegisters s = do
   \a -> pure $ do
     if
-      | a == 0x2000 -> dummyRef_quiet "ppuCtrl" a
+      | a == 0x2000 -> ppuCtrl s
       | a == 0x2001 -> dummyRef_quiet "ppuMask" a
       | a == 0x2002 -> ppuStatus s
 
@@ -140,17 +140,23 @@ makeRegisters s = do
       | otherwise ->
         error $ printf "PPU.makeRegisters: address = $%04X" a
 
+ppuCtrl :: State -> Ref U8
+ppuCtrl State{ctrl} = Ref {onRead,onWrite}
+  where
+    onRead = Error "ppuCtrl: read"
+    onWrite v = do
+      --Log $ printf "ppuCtrl: write %02x" v
+      write v ctrl
+
 ppuStatus :: State -> Ref U8
 ppuStatus State{status} = Ref {onRead,onWrite}
   where
-    name = "ppuStatus"
     onRead = do
       v <- read status
-      --Log $ printf "%s: read -> %02x" name v
+      --Log $ printf "ppuStatus: read -> %02x" v
       pure v
     onWrite v = do
-      Log $ printf "%s: write %02x" name v
-      write v status
+      Error $ printf "ppuStatus: write %02x" v
 
 ppuAddr :: State -> Ref U8
 ppuAddr State{addr,latch} = Ref {onRead,onWrite}
@@ -174,9 +180,10 @@ ppuData s@State{bus,addr} = Ref {onRead,onWrite}
       incrementAddr s
 
 incrementAddr :: State -> Eff ()
-incrementAddr State{addr} = do
-  let inc = 1 -- TODO: 1 or 32
-  update (+inc) addr
+incrementAddr s@State{addr} = do
+  inc32 <- vramAddressIncrement32 s
+  --Log (show ("inc32",inc32)) -- see False and True
+  update (+ (if inc32 then 32 else 1)) addr
 
 writeLO :: U8 -> Ref Addr -> Eff ()
 writeLO lo r = do
@@ -215,6 +222,7 @@ makePpuBus mapper = do
 
 data State = State -- TODO: rename Context? (because value never changes!)
   { bus :: Bus
+  , ctrl :: Ref U8
   , status :: Ref U8
 
   , latch :: Ref Bool
@@ -224,11 +232,16 @@ data State = State -- TODO: rename Context? (because value never changes!)
 initState :: Mapper -> Eff State
 initState mapper = do
   bus <- makePpuBus mapper
+  ctrl <- DefineRegister 0
   status <- DefineRegister 0x80 -- ???
 
   latch <- DefineRegister False
   addr <- DefineRegister 0
-  pure State {bus,status,latch,addr}
+  pure State {bus,ctrl,status,latch,addr}
+
+
+vramAddressIncrement32 :: State -> Eff Bool
+vramAddressIncrement32 State{ctrl} = (`testBit` 2) <$> read ctrl
 
 ----------------------------------------------------------------------
 -- Palette
