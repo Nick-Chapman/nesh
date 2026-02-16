@@ -9,7 +9,7 @@ module PPU
 import Control.Monad (when,forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read,write,Bus)
+import Framework (Eff(..),Ref(..),read,write,Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busPPU)
 import Prelude hiding (read)
@@ -126,28 +126,20 @@ makeRegisters :: State -> Bus
 makeRegisters s = do
   \a -> pure $ do
     if
-      | a == 0x2000 -> ppuCtrl s
-      | a == 0x2001 -> ppuMask s
+      | a == 0x2000 -> dummyRef_quiet "ppuCtrl" a
+      | a == 0x2001 -> dummyRef_quiet "ppuMask" a
       | a == 0x2002 -> ppuStatus s
 
-      | a == 0x2005 -> ppuScroll s
+      | a == 0x2005 -> dummyRef_quiet "ppuScroll" a
       | a == 0x2006 -> ppuAddr s
       | a == 0x2007 -> ppuData s
+
+      | a == 0x2003 -> dummyRef_quiet "oamAddr" a
+      | a == 0x4014 -> dummyRef_quiet "oamDMA" a
 
       | otherwise ->
         error $ printf "PPU.makeRegisters: address = $%04X" a
 
-ppuCtrl :: State -> Ref U8
-ppuCtrl State{ctrl} = Ref {onRead,onWrite}
-  where
-    name = "ppuCtrl"
-    onRead = do
-      v <- read ctrl
-      Log $ printf "%s: read -> %02x\n" name v
-      pure v
-    onWrite v = do
-      Log $ printf "%s: write %02x\n" name v
-      write v ctrl
 
 ppuStatus :: State -> Ref U8
 ppuStatus State{status} = Ref {onRead,onWrite}
@@ -155,11 +147,24 @@ ppuStatus State{status} = Ref {onRead,onWrite}
     name = "ppuStatus"
     onRead = do
       v <- read status
-      Log $ printf "%s: read -> %02x\n" name v
+      --Log $ printf "%s: read -> %02x" name v
       pure v
     onWrite v = do
-      Log $ printf "%s: write %02x\n" name v
+      Log $ printf "%s: write %02x" name v
       write v status
+
+{-
+ppuCtrl :: State -> Ref U8
+ppuCtrl State{ctrl} = Ref {onRead,onWrite}
+  where
+    name = "ppuCtrl"
+    onRead = do
+      v <- read ctrl
+      Log $ printf "%s: read -> %02x" name v
+      pure v
+    onWrite v = do
+      Log $ printf "%s: write %02x" name v
+      write v ctrl
 
 ppuMask :: State -> Ref U8
 ppuMask State{mask} = Ref {onRead,onWrite}
@@ -167,10 +172,10 @@ ppuMask State{mask} = Ref {onRead,onWrite}
     name = "ppuMask"
     onRead = do
       v <- read mask
-      Log $ printf "%s: read -> %02x\n" name v
+      Log $ printf "%s: read -> %02x" name v
       pure v
     onWrite v = do
-      Log $ printf "%s: write %02x\n" name v
+      Log $ printf "%s: write %02x" name v
       write v mask
 
 ppuScroll :: State -> Ref U8
@@ -179,20 +184,21 @@ ppuScroll State{scroll} = Ref {onRead,onWrite}
     name = "ppuScroll"
     onRead = do
       v <- read scroll
-      Log $ printf "%s: read -> %02x\n" name v
+      Log $ printf "%s: read -> %02x" name v
       pure v
     onWrite v = do
-      Log $ printf "%s: write %02x\n" name v
+      Log $ printf "%s: write %02x" name v
       write v scroll
+-}
 
 ppuAddr :: State -> Ref U8
 ppuAddr State{addrHI,addrLO,latch} = Ref {onRead,onWrite}
   where
     name = "ppuAddr"
-    onRead = Error $ printf "%s: read\n" name
+    onRead = Error $ printf "%s: read" name
     onWrite v = do
       latchV <- read latch
-      Log $ printf "%s: write (latch:%s) %02x\n" name (show latchV) v
+      --Log $ printf "%s: write (latch:%s) %02x" name (show latchV) v
       write (not latchV) latch
       case latchV of
         True -> write v addrLO
@@ -220,7 +226,7 @@ ppuData s@State{bus} = Ref {onRead,onWrite}
     onRead = Error "ppuData/read"
     onWrite v = do
       a <- getAddr s
-      --Log $ (printf "ppuData (write) addr (%04x) = %02x\n" a v)
+      --Log $ (printf "ppuData (write) addr (%04x) = %02x" a v)
       bus a >>= write v
       incrementAddr s
 
@@ -238,19 +244,18 @@ makePpuBus mapper = do
       | a >= 0x2000 && a <= 0x2fff
         -> vram (fromIntegral a - 0x2000)
 
+      | a >= 0x3f00 && a <= 0x3f1f -> dummyRef "pallete RAM" a
+      -- TODO: palette ram mirrors
+
       | otherwise -> do
         error $ printf "PpuBus: unknown address = $%04X" a
 
 ----------------------------------------------------------------------
 -- PPU State
 
-data State = State -- TODO: rename Context (because value never changes!)
+data State = State -- TODO: rename Context? (because value never changes!)
   { bus :: Bus
---  , mode :: Ref Mode -- TDO: split out as Emu Control
-  , ctrl :: Ref U8
   , status :: Ref U8
-  , mask :: Ref U8
-  , scroll :: Ref U8
 
   , latch :: Ref Bool
   , addrHI :: Ref U8 -- TODO: better to have one register with full 16bit address
@@ -260,16 +265,12 @@ data State = State -- TODO: rename Context (because value never changes!)
 initState :: Mapper -> Eff State
 initState mapper = do
   bus <- makePpuBus mapper
---  mode <- DefineRegister Gradient
-  ctrl <- DefineRegister 0 -- ???
   status <- DefineRegister 0x80 -- ???
-  mask <- DefineRegister 0
-  scroll <- DefineRegister 0
 
   latch <- DefineRegister False
   addrHI <- DefineRegister 0
   addrLO <- DefineRegister 0
-  pure State {bus,ctrl,status,mask,scroll,latch,addrHI,addrLO}
+  pure State {bus,status,latch,addrHI,addrLO}
 
 ----------------------------------------------------------------------
 -- Palette

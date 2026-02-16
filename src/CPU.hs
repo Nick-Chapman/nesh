@@ -17,11 +17,29 @@ import Types (U8,Addr,HL(..),makeAddr,splitAddr)
 ----------------------------------------------------------------------
 -- interrupts
 
-data Interrupt = NMI | IRQ | Reset deriving Show
+data Interrupt = RST | NMI | IRQ | IRQ_setB deriving (Eq,Show)
+
+vector :: Interrupt -> Addr
+vector = \case
+  NMI -> 0xfffa
+  RST -> 0xfffc
+  IRQ -> 0xfffe
+  IRQ_setB -> 0xfffe
 
 trigger :: State -> Interrupt -> Eff ()
-trigger _state interrupt = do
-  Log $ printf "[%s]" (show interrupt)
+trigger s@State{bus,ip,flags} interrupt = do
+  Print $ printf "[%s]" (show interrupt)
+  ignore <- if interrupt == IRQ then readFlag s I else pure False
+  if ignore then pure () else do
+    read ip >>= push16 s
+    flags <- read flags
+    push s $ if (interrupt == IRQ_setB) then setBit flags 4 else flags
+    pcLO <- bus (vector interrupt) >>= read
+    pcHI <- bus (vector interrupt + 1) >>= read
+    let pc = makeAddr HL { hi = pcHI, lo = pcLO }
+    write pc ip
+    addExtraCycles s 7
+    writeFlag s I True
 
 ----------------------------------------------------------------------
 -- cpu
@@ -33,8 +51,6 @@ cpu config@Config{trace_cpu} s = do
   where
     loop :: Int -> State -> Eff ()
     loop i s@State{ip,bus} = do
-
-      --when (i `mod` 100_000 == 0) $ Log "I" -- about every 10 frames
 
       maybeHalt config s
       pc <- read ip
@@ -253,7 +269,7 @@ immediateAddr State{bus,ip} = do
 
 penalisePageCross :: State -> Instruction -> Addr -> Addr -> Eff ()
 penalisePageCross s instruction base addr = do
-  when (hasPageCrossPenalty instruction && pageCross base addr) $ addExtraCycle s
+  when (hasPageCrossPenalty instruction && pageCross base addr) $ addExtraCycles s 1
 
 pageCross :: Addr -> Addr -> Bool
 pageCross a1 a2 = do
@@ -278,7 +294,7 @@ logCpuInstruction s@State{bus,ip} instruction mode addr = do
   let bytesS = intercalate " " (map (printf "%02X") bytes)
   let a = printf "%s  %s %s" (ljust 8 bytesS) (show instruction) (seeArgs (mode,args,addr))
   b <- seeState s
-  Log $ printf "%04X  %s%s\n" pc (ljust 42 a) b
+  IO $ printf "%04X  %s%s\n" pc (ljust 42 a) b
 
 ljust :: Int -> String -> String
 ljust n s = s <> take (max 0 (n - length s)) (repeat ' ')
@@ -377,9 +393,9 @@ updateFlag flag bool v = (if bool then setBit else clearBit) v (flagBitNum flag)
 ----------------------------------------------------------------------
 -- track cpu cycles
 
-addExtraCycle :: State -> Eff ()
-addExtraCycle State{extraCycles} = do
-  update (+1) extraCycles
+addExtraCycles :: State -> Int -> Eff ()
+addExtraCycles State{extraCycles} n = do
+  update (+n) extraCycles
 
 collectExtraCycles :: State -> Eff Int
 collectExtraCycles State{extraCycles} = do
@@ -610,13 +626,13 @@ writeFlag State{flags} flag bool = do
 branchFlagSet :: State -> Flag -> Addr -> Eff ()
 branchFlagSet s@State{ip,flags} flag addr = do
   flags <- read flags
-  let eff = do write addr ip; addExtraCycle s
+  let eff = do write addr ip; addExtraCycles s 1
   when (testFlag flags flag) eff
 
 branchFlagClear :: State -> Flag -> Addr -> Eff ()
 branchFlagClear s@State{ip,flags} flag addr = do
   flags <- read flags
-  let eff = do write addr ip; addExtraCycle s
+  let eff = do write addr ip; addExtraCycles s 1
   when (not $ testFlag flags flag) eff
 
 load :: State -> Ref U8 -> U8 -> Eff ()

@@ -8,7 +8,7 @@ module Mapper
 import CHR qualified (read)
 import Control.Monad (when)
 import Data.ByteString.Internal (w2c)
-import Framework (Ref(..))
+import Framework (Eff(..),Ref(..))
 import PRG qualified (read)
 import Types (U8,Addr)
 import qualified CHR (ROM,init)
@@ -29,7 +29,7 @@ busCPU Mapper{prgs} a = readonly (PRG.read prg a)
     readonly :: U8 -> Ref U8
     readonly byte =
       Ref { onRead = pure byte
-          , onWrite = \v -> error (show ("readonly/onWrite",a,v))
+          , onWrite = \v -> Error (show ("busCPU: readonly/onWrite",a,v))
           }
 
 busPPU :: Mapper -> Addr -> Ref U8
@@ -39,7 +39,8 @@ busPPU Mapper{chrs} a = readonly (CHR.read chr a)
     readonly :: U8 -> Ref U8
     readonly byte =
       Ref { onRead = pure byte
-          , onWrite = \v -> error (show ("readonly/onWrite",a,v))
+--          , onWrite = \v -> Error (show ("busPPU: readonly/onWrite",a,v))
+          , onWrite = \_v -> pure () -- for nestest
           }
 
 loadMapper :: String -> IO Mapper

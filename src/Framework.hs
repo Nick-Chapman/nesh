@@ -1,10 +1,10 @@
 module Framework
   ( Eff(..), runEffect
-  , Ref(..), read, write, update
+  , Ref(..), read, write, update, dummyRef, dummyRef_quiet
   , Bus
   ) where
 
-import Control.Monad (ap,liftM)
+import Control.Monad (when,ap,liftM)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Data.List (insertBy)
 import Data.Ord (comparing)
@@ -32,6 +32,23 @@ update f r = do
 
 type Bus = (Addr -> Eff (Ref U8))
 
+dummyRef_maybeLog :: Bool -> String -> Addr -> Ref U8
+dummyRef_maybeLog doLog tag a =
+  Ref { onRead = do
+          -- TODO: make these Errors to stop emulation
+          when doLog $ Log (printf "TODO (%s): read: %04x" tag a)
+          pure 0
+      , onWrite = \v -> do
+          when doLog $ Log (printf "TODO (%s): write: %04x = %02x" tag a v)
+          pure ()
+      }
+
+dummyRef :: String -> Addr -> Ref U8
+dummyRef = dummyRef_maybeLog True
+
+dummyRef_quiet :: String -> Addr -> Ref U8
+dummyRef_quiet = dummyRef_maybeLog False
+
 ----------------------------------------------------------------------
 -- effect
 
@@ -43,9 +60,12 @@ data Eff a where
   Ret :: a -> Eff a
   Bind :: Eff a -> (a -> Eff b) -> Eff b
   Halt :: Eff ()
-  Log :: String -> Eff ()
-  Error :: String -> Eff a
   IO :: IO a -> Eff a
+
+  Print :: String -> Eff () -- raw flushed print
+  Log :: String -> Eff () -- flushed/print showing #cycles & adding NL
+  Error :: String -> Eff a -- print and stop
+
   DefineRegister :: a -> Eff (Ref a)
   DefineMemory :: Int -> Eff (Int -> Ref U8)
   Parallel :: Eff () -> Eff () -> Eff ()
@@ -61,20 +81,21 @@ runEffect eff0 = loop s0 eff0 k0
     loop s eff k = case eff of
       Ret a -> k a s
       Bind m f -> loop s m $ \a s -> loop s (f a) k
-
       Halt -> pure ()
+      IO io -> do x <- io; k x s
+
+      Print message -> do
+        putOut message
+        k () s
 
       Log message -> do
-        putOut message
+        let State {cycles} = s
+        putOut (printf "%6d: %s\n" cycles message)
         k () s
 
       Error message -> do
         putOut (printf "ERROR: %s\n" message)
         pure ()
-
-      IO io -> do
-        x <- io
-        k x s
 
       DefineRegister v -> do
         r <- newIORef v
