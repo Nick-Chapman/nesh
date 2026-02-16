@@ -7,7 +7,7 @@ module PPU
   , Graphics(..)
   ) where
 
-import Control.Monad (forM_)
+import Control.Monad (when,forM_)
 import Data.Bits (testBit)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write)
@@ -21,11 +21,11 @@ import Types (Addr,U8,RGB,HL(..),makeAddr,splitAddr)
 ----------------------------------------------------------------------
 -- Graphics
 
-data Mode = Gradient1 | Gradient2 | ViewTiles
+data Mode = Normal | Gradient1 | ViewTiles
   deriving (Eq,Enum,Bounded,Show)
 
 initMode :: Mode
-initMode = Gradient1
+initMode = Normal
 
 nextMode :: Mode -> Mode
 nextMode s = if s == maxBound then minBound else succ s
@@ -39,17 +39,44 @@ data Graphics = Graphics
 ----------------------------------------------------------------------
 -- ppu
 
-ppu :: State -> Graphics -> Eff ()
-ppu state@State{} graphics = loop 0
+ppu :: Eff () -> State -> Graphics -> Eff ()
+ppu triggerNMI state@State{} graphics = loop 0
   where
     Graphics{mode,displayFrame} = graphics
     loop frame = do
       read mode >>= \case
-        Gradient1 -> testGradient1 graphics frame
-        Gradient2 -> testGradient2 graphics frame
-        ViewTiles -> viewTiles state graphics
+        Normal -> normalOperation triggerNMI state graphics
+        Gradient1 -> do testGradient graphics frame; AdvancePPU (262 * 341)
+        ViewTiles -> do viewTiles state graphics; AdvancePPU (262 * 341)
       displayFrame frame
       loop (frame+1)
+
+----------------------------------------------------------------------
+-- normal operation
+
+-- In total, we have 262 (1+240+21) lines y:[-1..260]
+--   One pre-visible line, y:-1
+--   240 visible lines, y:[0..239]
+--   21 post-visible lines, y:[240..260]
+
+normalOperation :: Eff () -> State -> Graphics -> Eff ()
+normalOperation triggerNMI state graphics = do timing; viewTiles state graphics
+  where
+    timing = do
+      forM_ [(-1)..261] $ \(y::Int) -> do
+        when (y == -1) preVisibleLine
+        when (y >= 0 && y <= 239) visibleLine
+        when (y == 241) vblankLine
+        AdvancePPU 341
+
+    preVisibleLine = do
+      pure ()
+
+    visibleLine = do
+      pure ()
+
+    vblankLine = do
+      triggerNMI
 
 ----------------------------------------------------------------------
 -- view-tiles
@@ -74,45 +101,24 @@ viewTiles state Graphics{plot} = oneFrame
                   (fromIntegral $ startX + x * scale + xx)
                   (fromIntegral $ startY + y * scale + yy)
                   col
-      AdvancePPU (341 * 260)
+      --AdvancePPU (341 * 260)
 
 ----------------------------------------------------------------------
 -- shifting gradient test pattern...
 
--- In total, we have 262 (1+240+21) lines y:[-1..260]
---   One pre-visible line, y:-1
---   240 visible lines, y:[0..239]
---   21 post-visible lines, y:[240..260]
-testGradient1 :: Graphics -> Int -> Eff ()
-testGradient1 Graphics{plot} frame = do
-  AdvancePPU 341
+testGradient :: Graphics -> Int -> Eff ()
+testGradient Graphics{plot} frame = do
   forM_ [0..239] $ \y -> do
     forM_ [0..255] $ \x -> do
       let col = gradientCol (fromIntegral frame) x y
       plot x y col
-    AdvancePPU 341
-  AdvancePPU (21 * 341)
-
--- v2: Consolidate AdvancePPU calls.
--- Would have expected this to be quicker. BUT IT IS NOT!
--- In fact nearly half the speed. Very confused. Why is this??
--- Update: ("Strict" and -O1) -- 67fps; stable MEM% 0.2
--- So, we still ahve a puzzle. Why is this slower than v1 ?
-testGradient2 :: Graphics -> Int -> Eff ()
-testGradient2 Graphics{plot} frame = do
-  forM_ [0..239] $ \y -> do
-    forM_ [0..255] $ \x -> do
-      let col = gradientCol (fromIntegral frame) x y
-      plot x y col
-  AdvancePPU (262 * 341)
-
-
-gradientCol :: CInt -> CInt -> CInt -> RGB
-gradientCol frame x y = do
-  let r = fromIntegral (y + frame)
-  let g = 0
-  let b = fromIntegral (x + frame)
-  V4 r g b 255
+  where
+    gradientCol :: CInt -> CInt -> CInt -> RGB
+    gradientCol frame x y = do
+      let r = fromIntegral (y + frame)
+      let g = 0
+      let b = fromIntegral (x + frame)
+      V4 r g b 255
 
 ----------------------------------------------------------------------
 -- registers

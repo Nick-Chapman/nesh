@@ -13,6 +13,7 @@ makeCpuBus :: Mapper -> Bus -> Eff Bus
 makeCpuBus mapper ppuRegisterBus = do
   wram <- DefineMemory 2048
   pure $ \a -> do
+    --when (a == 0xfffa) $ Log "Reading from NMI interrupt vector" -- TODO
     if
       | a <= 0x07ff -- TODO mirrors
         -> wram (fromIntegral a)

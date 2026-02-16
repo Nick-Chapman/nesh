@@ -1,7 +1,8 @@
 module CPU
-  ( State, mkState, peekCYC,
-    Config(..),
-    cpu
+  ( State, mkState
+  , Config(..)
+  , Interrupt(..), trigger
+  , cpu
   ) where
 
 import CommandLine(Config(..))
@@ -9,18 +10,26 @@ import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
 import Framework (Eff(..),Ref(..),write,read,update)
-import PPU qualified (State) --,readPosition) -- so we can peek at x/y in the logging
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr)
+
+----------------------------------------------------------------------
+-- interrupts
+
+data Interrupt = NMI | IRQ | Reset deriving Show
+
+trigger :: State -> Interrupt -> Eff ()
+trigger _state interrupt = do
+  Log $ printf "[%s]" (show interrupt)
 
 ----------------------------------------------------------------------
 -- cpu
 
 type Bus = (Addr -> Ref U8)
 
-cpu :: Config -> State -> PPU.State -> Eff ()
-cpu config@Config{trace_cpu} s ppuState = do
+cpu :: Config -> State -> Eff ()
+cpu config@Config{trace_cpu} s = do
   initialize config s
   loop 1 s
   where
@@ -39,7 +48,7 @@ cpu config@Config{trace_cpu} s ppuState = do
       (addr,eff) <- doMode s instruction mode withArg
 
       -- execute
-      when (trace_cpu) $ logCpuInstruction s instruction mode addr ppuState
+      when (trace_cpu) $ logCpuInstruction s instruction mode addr
       update (+ (1 + sizeMode mode)) ip
       eff
 
@@ -262,15 +271,15 @@ hasPageCrossPenalty = \case
 ----------------------------------------------------------------------
 -- trace instruction
 
-logCpuInstruction :: State -> Instruction -> Mode -> Addr -> PPU.State -> Eff ()
-logCpuInstruction s@State{bus,ip} instruction mode addr ppuState = do
+logCpuInstruction :: State -> Instruction -> Mode -> Addr -> Eff ()
+logCpuInstruction s@State{bus,ip} instruction mode addr = do
   pc <- read ip
   opcode <- read (bus (pc))
   args <- sequence [ read (bus (pc + fromIntegral i)) | i <- [ 1 .. sizeMode mode ] ]
   let bytes = opcode:args
   let bytesS = intercalate " " (map (printf "%02X") bytes)
   let a = printf "%s  %s %s" (ljust 8 bytesS) (show instruction) (seeArgs (mode,args,addr))
-  b <- seeState s ppuState
+  b <- seeState s
   Log $ printf "%04X  %s%s\n" pc (ljust 42 a) b
 
 ljust :: Int -> String -> String
@@ -324,8 +333,8 @@ mkState bus = do
   cyc <- DefineRegister 0
   pure $ State { ip, a, x, y, flags, sp, bus, extraCycles, cyc }
 
-seeState :: State -> PPU.State -> Eff String
-seeState State{a,x,y,flags,sp,cyc} _ppuState = do
+seeState :: State -> Eff String
+seeState State{a,x,y,flags,sp,cyc} = do
   a <- read a
   x <- read x
   y <- read y
@@ -345,9 +354,6 @@ seeState State{a,x,y,flags,sp,cyc} _ppuState = do
       printf "A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d"
        a x y flags sp (ppuY+1) ppuX cyc
   pure mes
-
-peekCYC :: State -> Eff Int
-peekCYC State{cyc} = read cyc
 
 ----------------------------------------------------------------------
 -- Flags (bits of flags register)
