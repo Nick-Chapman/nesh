@@ -7,7 +7,7 @@ module PPU
   ) where
 
 import Control.Monad (when,forM_)
-import Data.Bits (testBit,setBit,clearBit,(.&.))
+import Data.Bits (testBit,(.&.),(.|.))
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
@@ -59,8 +59,9 @@ ppu triggerNMI state@State{} graphics = loop 0
 --   21 post-visible lines, y:[240..260]
 
 normalOperation :: Eff () -> State -> Graphics -> Eff ()
-normalOperation triggerNMI s@State{control} graphics = timing
+normalOperation triggerNMI s@State{control,status} graphics = timing
   where
+
     timing = do
       forM_ [(-1)..261] $ \(y::Int) -> do
         when (y == -1) preVisibleLine
@@ -68,8 +69,10 @@ normalOperation triggerNMI s@State{control} graphics = timing
         when (y == 241) vblankLine
         AdvancePPU 341
 
+    Status{isInVBlankInterval} = status
+
     preVisibleLine = do
-      setIsInVblankInterval s False
+      write False isInVBlankInterval
       pure ()
 
     visibleLine y = do
@@ -77,7 +80,7 @@ normalOperation triggerNMI s@State{control} graphics = timing
       pure ()
 
     vblankLine = do
-      setIsInVblankInterval s True
+      write True isInVBlankInterval
       Control{generateNMIOnVBlank=gen} <- read control
       when gen $ triggerNMI
 
@@ -170,7 +173,7 @@ ppuStatus :: State -> Ref U8
 ppuStatus State{status} = Ref {onRead,onWrite}
   where
     onRead = do
-      v <- read status
+      v <- readStatus status
       --Log $ printf "ppuStatus: read -> %02x" v
       pure v
     onWrite v = do
@@ -253,7 +256,7 @@ makePpuBus mapper = do
 data State = State -- TODO: rename Context? (because value never changes!)
   { bus :: Bus
   , control :: Ref Control
-  , status :: Ref U8
+  , status :: Status
 
   , latch :: Ref Bool
   , addr :: Ref Addr
@@ -263,16 +266,10 @@ initState :: Mapper -> Eff State
 initState mapper = do
   bus <- makePpuBus mapper
   control <- DefineRegister (byte2control 0)
-  status <- DefineRegister 0x80 -- ???
-
+  status <- initStatus
   latch <- DefineRegister False
   addr <- DefineRegister 0
   pure State {bus,control,status,latch,addr}
-
-setIsInVblankInterval :: State -> Bool -> Eff ()
-setIsInVblankInterval State{status} bool = do
-  let changeBit = if bool then setBit else clearBit
-  update (`changeBit` 7) status
 
 ----------------------------------------------------------------------
 -- ControlByte
@@ -296,6 +293,32 @@ byte2control v = Control
   -- Nothing in bit position 6
   , generateNMIOnVBlank = v `testBit` 7
   }
+
+----------------------------------------------------------------------
+-- StatusByte
+
+data Status = Status
+  { spriteOverflow :: Ref Bool
+  , sprite0Hit :: Ref Bool
+  , isInVBlankInterval :: Ref Bool
+  }
+
+initStatus :: Eff Status
+initStatus = do
+  spriteOverflow <- DefineRegister False
+  sprite0Hit <- DefineRegister False
+  isInVBlankInterval <- DefineRegister True
+  pure Status { spriteOverflow, sprite0Hit, isInVBlankInterval }
+
+readStatus :: Status -> Eff U8
+readStatus Status{spriteOverflow,sprite0Hit,isInVBlankInterval} = do
+  spriteOverflow <- read spriteOverflow
+  sprite0Hit <- read sprite0Hit
+  isInVBlankInterval <- read isInVBlankInterval
+  pure $
+    (if spriteOverflow then 0x20 else 0) .|.
+    (if sprite0Hit then 0x40 else 0) .|.
+    (if isInVBlankInterval then 0x80 else 0)
 
 ----------------------------------------------------------------------
 -- Palette
