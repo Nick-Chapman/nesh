@@ -59,7 +59,7 @@ ppu triggerNMI state@State{} graphics = loop 0
 --   21 post-visible lines, y:[240..260]
 
 normalOperation :: Eff () -> State -> Graphics -> Eff ()
-normalOperation triggerNMI s graphics = timing --do timing; viewTiles s graphics
+normalOperation triggerNMI s@State{control} graphics = timing
   where
     timing = do
       forM_ [(-1)..261] $ \(y::Int) -> do
@@ -78,16 +78,14 @@ normalOperation triggerNMI s graphics = timing --do timing; viewTiles s graphics
 
     vblankLine = do
       setIsInVblankInterval s True
-      gen <- generateNMIonVBlank s
+      Control{generateNMIOnVBlank=gen} <- read control
       when gen $ triggerNMI
 
 
 renderScanLine :: State -> Graphics -> Int -> Eff ()
-renderScanLine s@State{bus,ctrl} Graphics{plot} y = do
-  ctrl <- read ctrl
-  let nameTableId :: U8 = (ctrl .&. 0x3)
-  let nameTableLocation :: Addr = 0x2000 + (fromIntegral nameTableId * 1024)
-  let backgroundPatternTableId = ctrl `testBit` 4
+renderScanLine s@State{bus,control} Graphics{plot} y = do
+  Control{nameTableId, backgroundPatternTableId} <- read control
+  let nameTableLocation :: Addr = 0x2000 + fromIntegral (fromEnum nameTableId * 1024)
   forM_ [0 .. 31] $ \tileX -> do
     let x = tileX * 8
     let tileY = y `div` 8
@@ -163,12 +161,10 @@ makeRegisters s = do
         error $ printf "PPU.makeRegisters: address = $%04X" a
 
 ppuCtrl :: State -> Ref U8
-ppuCtrl State{ctrl} = Ref {onRead,onWrite}
+ppuCtrl State{control} = Ref {onRead,onWrite}
   where
     onRead = Error "ppuCtrl: read"
-    onWrite v = do
-      --Log $ printf "ppuCtrl: write %02x" v
-      write v ctrl
+    onWrite v = write (byte2control v) control
 
 ppuStatus :: State -> Ref U8
 ppuStatus State{status} = Ref {onRead,onWrite}
@@ -202,8 +198,8 @@ ppuData s@State{bus,addr} = Ref {onRead,onWrite}
       incrementAddr s
 
 incrementAddr :: State -> Eff ()
-incrementAddr s@State{addr} = do
-  inc32 <- vramAddressIncrement32 s
+incrementAddr State{control,addr} = do
+  Control{vramAddressIncrement32=inc32} <- read control
   --Log (show ("inc32",inc32)) -- see False and True
   update (+ (if inc32 then 32 else 1)) addr
 
@@ -256,7 +252,7 @@ makePpuBus mapper = do
 
 data State = State -- TODO: rename Context? (because value never changes!)
   { bus :: Bus
-  , ctrl :: Ref U8
+  , control :: Ref Control
   , status :: Ref U8
 
   , latch :: Ref Bool
@@ -266,25 +262,40 @@ data State = State -- TODO: rename Context? (because value never changes!)
 initState :: Mapper -> Eff State
 initState mapper = do
   bus <- makePpuBus mapper
-  ctrl <- DefineRegister 0
+  control <- DefineRegister (byte2control 0)
   status <- DefineRegister 0x80 -- ???
 
   latch <- DefineRegister False
   addr <- DefineRegister 0
-  pure State {bus,ctrl,status,latch,addr}
-
-
-vramAddressIncrement32 :: State -> Eff Bool
-vramAddressIncrement32 State{ctrl} = (`testBit` 2) <$> read ctrl
-
-generateNMIonVBlank :: State -> Eff Bool
-generateNMIonVBlank State{ctrl} = (`testBit` 7) <$> read ctrl
+  pure State {bus,control,status,latch,addr}
 
 setIsInVblankInterval :: State -> Bool -> Eff ()
 setIsInVblankInterval State{status} bool = do
   let changeBit = if bool then setBit else clearBit
   update (`changeBit` 7) status
 
+----------------------------------------------------------------------
+-- ControlByte
+
+data Control = Control
+  { nameTableId :: U2
+  , vramAddressIncrement32 :: Bool
+  , sprite8x8PatternTableId  :: Bool
+  , backgroundPatternTableId  :: Bool
+  , spriteSize :: Bool
+  , generateNMIOnVBlank :: Bool
+  }
+
+byte2control :: U8 -> Control
+byte2control v = Control
+  { nameTableId = toEnum (fromIntegral (v .&. 0x3))
+  , vramAddressIncrement32 = v `testBit` 2
+  , sprite8x8PatternTableId = v `testBit` 3
+  , backgroundPatternTableId = v `testBit` 4
+  , spriteSize = v `testBit` 5
+  -- Nothing in bit position 6
+  , generateNMIOnVBlank = v `testBit` 7
+  }
 
 ----------------------------------------------------------------------
 -- Palette
@@ -309,6 +320,7 @@ grayPalette = Palette $ \case
 type ColourIndex = U2
 
 data U2 = I0 | I1 | I2 | I3
+  deriving (Enum)
 
 ----------------------------------------------------------------------
 -- Tile
