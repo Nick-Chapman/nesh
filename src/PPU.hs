@@ -7,7 +7,7 @@ module PPU
   ) where
 
 import Control.Monad (when,forM_)
-import Data.Bits (testBit)
+import Data.Bits (testBit,setBit,clearBit)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
@@ -59,7 +59,7 @@ ppu triggerNMI state@State{} graphics = loop 0
 --   21 post-visible lines, y:[240..260]
 
 normalOperation :: Eff () -> State -> Graphics -> Eff ()
-normalOperation triggerNMI state graphics = do timing; viewTiles state graphics
+normalOperation triggerNMI s graphics = do timing; viewTiles s graphics
   where
     timing = do
       forM_ [(-1)..261] $ \(y::Int) -> do
@@ -69,13 +69,16 @@ normalOperation triggerNMI state graphics = do timing; viewTiles state graphics
         AdvancePPU 341
 
     preVisibleLine = do
+      setIsInVblankInterval s False
       pure ()
 
     visibleLine = do
       pure ()
 
     vblankLine = do
-      triggerNMI
+      setIsInVblankInterval s True
+      gen <- generateNMIonVBlank s
+      when gen $ triggerNMI
 
 ----------------------------------------------------------------------
 -- view-tiles
@@ -203,16 +206,28 @@ writeHI hi r = do
 makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
 makePpuBus mapper = do
   vram <- DefineMemory 4096 -- TODO: really only 2K, with mirroring
+
+  let paletteRam = dummyRef "palete ram" -- TODO
+
   pure $ \a -> pure $ do
     if
       | a <= 0x1fff
         -> Mapper.busPPU mapper a
 
+      -- vram
       | a >= 0x2000 && a <= 0x2fff
         -> vram (fromIntegral a - 0x2000)
 
-      | a >= 0x3f00 && a <= 0x3f1f -> dummyRef "pallete RAM" a
-      -- TODO: palette ram mirrors
+      {- vram mirror -- TODO
+      | a >= 0x3000 && a <= 0x3eff
+        -> vram (fromIntegral a - 0x3000) -}
+
+      -- palette ram
+      | a >= 0x3f00 && a <= 0x3f1f -> paletteRam (a - 0x3f00)
+
+      {- palette ram mirrors -- TODO
+      | a >= 0x3f20 && a <= 0x3fff
+        -> paletteRam ((a - 0x3f20) `mod` 0x20) -}
 
       | otherwise -> do
         error $ printf "PpuBus: unknown address = $%04X" a
@@ -242,6 +257,15 @@ initState mapper = do
 
 vramAddressIncrement32 :: State -> Eff Bool
 vramAddressIncrement32 State{ctrl} = (`testBit` 2) <$> read ctrl
+
+generateNMIonVBlank :: State -> Eff Bool
+generateNMIonVBlank State{ctrl} = (`testBit` 7) <$> read ctrl
+
+setIsInVblankInterval :: State -> Bool -> Eff ()
+setIsInVblankInterval State{status} bool = do
+  let changeBit = if bool then setBit else clearBit
+  update (`changeBit` 7) status
+
 
 ----------------------------------------------------------------------
 -- Palette
