@@ -7,7 +7,7 @@ module PPU
   ) where
 
 import Control.Monad (when,forM_)
-import Data.Bits (testBit,setBit,clearBit,(.&.),shiftR)
+import Data.Bits (testBit,setBit,clearBit,(.&.))
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
@@ -85,8 +85,7 @@ normalOperation triggerNMI s graphics = timing --do timing; viewTiles s graphics
 renderScanLine :: State -> Graphics -> Int -> Eff ()
 renderScanLine s@State{bus,ctrl} Graphics{plot} y = do
   ctrl <- read ctrl
-  let _nameTableId :: U8 = (ctrl .&. 0xC0) `shiftR` 6 -- TODO: what is wrong with this?
-  let nameTableId :: U8 = 0 -- But this works!
+  let nameTableId :: U8 = (ctrl .&. 0x3)
   let nameTableLocation :: Addr = 0x2000 + (fromIntegral nameTableId * 1024)
   let backgroundPatternTableId = ctrl `testBit` 4
   forM_ [0 .. 31] $ \tileX -> do
