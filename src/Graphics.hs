@@ -56,6 +56,7 @@ main config mapper = do
 
   runEffect $ do
     mode <- DefineRegister initMode
+    ppuState <- PPU.initState mapper mode
     let
       onPlot :: CInt -> CInt -> RGB -> Eff ()
       onPlot x0 y0 col = IO $ do
@@ -87,10 +88,8 @@ main config mapper = do
       graphics = PPU.Graphics
         { plot = onPlot
         , displayFrame
-        , mode
         }
 
-    ppuState <- PPU.initState mapper
     makeSystem config mapper ppuState graphics
 
   putOut "\n"

@@ -7,7 +7,9 @@ module PPU
   ) where
 
 import Control.Monad (when,forM_)
-import Data.Bits (testBit,(.&.),(.|.))
+import Data.Array (Array,(!),listArray)
+import Data.Bits (testBit,(.&.),(.|.),shiftR)
+import Data.Word (Word32)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef_quiet)
 import Mapper (Mapper)
@@ -20,7 +22,7 @@ import Types (Addr,U8,RGB,HL(..),makeAddr,splitAddr)
 ----------------------------------------------------------------------
 -- Graphics
 
-data Mode = Normal | Gradient1 | ViewTiles
+data Mode = Normal | Gradient | ViewTiles
   deriving (Eq,Enum,Bounded,Show)
 
 initMode :: Mode
@@ -32,23 +34,70 @@ nextMode s = if s == maxBound then minBound else succ s
 data Graphics = Graphics
   { plot :: CInt -> CInt -> RGB -> Eff ()
   , displayFrame :: Int -> Eff ()
-  , mode :: Ref Mode
   }
 
 ----------------------------------------------------------------------
 -- ppu
 
 ppu :: Eff () -> State -> Graphics -> Eff ()
-ppu triggerNMI state@State{} graphics = loop 0
+ppu triggerNMI state@State{mode} graphics = loop 0
   where
-    Graphics{mode,displayFrame} = graphics
+    Graphics{displayFrame} = graphics
     loop frame = do
       read mode >>= \case
-        Normal -> normalOperation triggerNMI state graphics
-        Gradient1 -> do testGradient graphics frame; AdvancePPU (262 * 341)
+        Gradient -> do testGradient graphics frame; AdvancePPU (262 * 341)
         ViewTiles -> do viewTiles state graphics; AdvancePPU (262 * 341)
+        Normal -> normalOperation triggerNMI state graphics
+
       displayFrame frame
       loop (frame+1)
+
+----------------------------------------------------------------------
+-- shifting gradient test pattern...
+
+testGradient :: Graphics -> Int -> Eff () -- TODO bye
+testGradient Graphics{plot} frame = do
+  forM_ [0..239] $ \y -> do
+    forM_ [0..255] $ \x -> do
+      let col = gradientCol (fromIntegral frame) x y
+      plot x y col
+  where
+    gradientCol :: CInt -> CInt -> CInt -> RGB
+    gradientCol frame x y = do
+      let r = fromIntegral (y + frame)
+      let g = 0
+      let b = fromIntegral (x + frame)
+      V4 r g b 255
+
+----------------------------------------------------------------------
+-- view-tiles
+
+viewTiles :: State -> Graphics -> Eff () -- TODO bye
+viewTiles s Graphics{plot} = oneFrame
+  where
+    oneFrame = do
+      let scale = 2
+      let scaledSize = 8 * scale
+      let tilesPerRow = 256 `div` scaledSize
+      forM_ [0..239] $ \tileId -> do
+        let startX = tileId `mod` tilesPerRow * scaledSize
+        let startY = tileId `div` tilesPerRow * scaledSize
+        forM_ [0..7] $ \y -> do
+          tile <- makeTile s False tileId (fromIntegral y)
+          forM_ [0..7] $ \x -> do
+            let paletteId = 0
+            let colourIndex = getColourIndex tile (fromIntegral x)
+            col <-
+              case colourIndex of
+                I0 -> getColour s 0 I0
+                _ -> getColour s paletteId colourIndex
+
+            forM_ [0..scale-1] $ \yy -> do
+              forM_ [0..scale-1] $ \xx -> do
+                plot
+                  (fromIntegral $ startX + x * scale + xx)
+                  (fromIntegral $ startY + y * scale + yy)
+                  col
 
 ----------------------------------------------------------------------
 -- normal operation
@@ -61,7 +110,6 @@ ppu triggerNMI state@State{} graphics = loop 0
 normalOperation :: Eff () -> State -> Graphics -> Eff ()
 normalOperation triggerNMI s@State{control,status} graphics = timing
   where
-
     timing = do
       forM_ [(-1)..261] $ \(y::Int) -> do
         when (y == -1) preVisibleLine
@@ -96,51 +144,104 @@ renderScanLine s@State{bus,control} Graphics{plot} y = do
     tileId <- bus (nameTableLocation + fromIntegral tileIndex) >>= read
     let tileInsideY = y `mod` 8
     tile <- makeTile s backgroundPatternTableId (fromIntegral tileId) (fromIntegral tileInsideY)
+    paletteId <- getBackgroundPaletteId s nameTableId x y
     forM_ [0::Int ..7] $ \xx -> do
       let colourIndex = getColourIndex tile (fromIntegral xx)
-      let col = lookupPalette grayPalette colourIndex
-      plot (fromIntegral $ x+xx) (fromIntegral y) col
+      colour <- case colourIndex of I0 -> getColour s 0 I0
+                                    _ -> getColour s paletteId colourIndex
+      plot (fromIntegral $ x+xx) (fromIntegral y) colour
+
+getColourIndex :: Tile -> U8 -> ColourIndex
+getColourIndex TileX{loRow,hiRow} x = do
+  let i = 7 - fromIntegral x
+  let lo = loRow `testBit` i
+  let hi = hiRow `testBit` i
+  case (hi,lo) of
+    (False,False) -> I0
+    (False,True) -> I1
+    (True,False) -> I2
+    (True,True) -> I3
+
+getBackgroundPaletteId :: State -> U2 -> Int -> Int -> Eff PaletteId
+getBackgroundPaletteId State{bus} nameTableId x y = do
+  let xx = x `div` 32
+  let yy = y `div` 32
+  let nameTableLocation = 0x2000 + (fromIntegral.fromEnum) nameTableId * 1024
+  let atableStart = nameTableLocation + 960
+  let atableAddr :: Addr = atableStart + fromIntegral xx + fromIntegral yy * 8
+  atableByte <- bus atableAddr >>= read
+  let right :: Bool = (x `div` 16) `testBit` 0
+  let bottom = (y `div` 16) `testBit` 0
+  let shift = (if bottom then 4 else 0) + (if right then 2 else 0)
+  let twoBits = (atableByte `shiftR` shift) .&. 0x3
+  pure $ toEnum (fromIntegral twoBits)
 
 ----------------------------------------------------------------------
--- view-tiles
+-- tile
 
-viewTiles :: State -> Graphics -> Eff ()
-viewTiles state Graphics{plot} = oneFrame
-  where
-    oneFrame = do
-      let scale = 2
-      let scaledSize = 8 * scale
-      let tilesPerRow = 256 `div` scaledSize
-      forM_ [0..239] $ \tileId -> do
-        let startX = tileId `mod` tilesPerRow * scaledSize
-        let startY = tileId `div` tilesPerRow * scaledSize
-        forM_ [0..7] $ \y -> do
-          tile <- makeTile state False tileId (fromIntegral y)
-          forM_ [0..7] $ \x -> do
-            let col = lookupPalette grayPalette (getColourIndex tile (fromIntegral x))
-            forM_ [0..scale-1] $ \yy -> do
-              forM_ [0..scale-1] $ \xx -> do
-                plot
-                  (fromIntegral $ startX + x * scale + xx)
-                  (fromIntegral $ startY + y * scale + yy)
-                  col
+type PatternTableId = Bool
+type TileId = Int
+
+data Tile = TileX
+  { loRow :: U8
+  , hiRow :: U8
+  }
+
+makeTile :: State -> PatternTableId -> TileId -> U8 -> Eff Tile
+makeTile State{bus} patternTableId tileId y = do
+  let tableAddr = if patternTableId then 0x1000 else 0x0000
+  let loPlaneAddr = tableAddr + fromIntegral tileId * 16
+  let hiPlaneAddr = loPlaneAddr + 8
+  loRow <- bus (loPlaneAddr + fromIntegral y) >>= read
+  hiRow <- bus (hiPlaneAddr + fromIntegral y) >>= read
+  pure TileX {loRow,hiRow}
 
 ----------------------------------------------------------------------
--- shifting gradient test pattern...
+-- Colour
 
-testGradient :: Graphics -> Int -> Eff ()
-testGradient Graphics{plot} frame = do
-  forM_ [0..239] $ \y -> do
-    forM_ [0..255] $ \x -> do
-      let col = gradientCol (fromIntegral frame) x y
-      plot x y col
+getColour :: State -> PaletteId -> ColourIndex -> Eff Colour
+getColour State{bus} paletteId colourIndex = do
+  let a = 0x3f00 + fromIntegral paletteId * 4 + fromIntegral (fromEnum colourIndex)
+  v <- bus a >>= read
+  pure $ masterPalette (v `mod` 64)
+
+type PaletteId = Int -- 0..31 ?
+
+type ColourIndex = U2
+type Colour = RGB
+
+data U2 = I0 | I1 | I2 | I3 -- TODO: Is this helpful?
+  deriving (Eq,Enum)
+
+----------------------------------------------------------------------
+-- masterPalette
+
+masterPalette :: U8 -> Colour
+masterPalette v = do
+  arr ! fromIntegral v -- TODO: minimize need for fromIntegral
   where
-    gradientCol :: CInt -> CInt -> CInt -> RGB
-    gradientCol frame x y = do
-      let r = fromIntegral (y + frame)
-      let g = 0
-      let b = fromIntegral (x + frame)
-      V4 r g b 255
+    arr :: Array U8 Colour
+    arr = listArray (0,63) [ mkCol w | w <- colours ]
+
+    mkCol :: Word32 -> Colour
+    mkCol w = V4 r g b i
+      where
+        r = fromIntegral $ (w `shiftR` 0) .&. 0xff
+        g = fromIntegral $ (w `shiftR` 8) .&. 0xff
+        b = fromIntegral $ (w `shiftR` 16) .&. 0xff
+        i = fromIntegral $ (w `shiftR` 24) .&. 0xff
+
+colours :: [Word32]
+colours =
+  [0xff626262,0xff902001,0xffa00b24,0xff900047,0xff620060,0xff24006a,0xff001160,0xff002747
+  ,0xff003c24,0xff004a01,0xff004f00,0xff244700,0xff623600,0xff000000,0xff000000,0xff000000
+  ,0xffababab,0xffe1561f,0xffff394d,0xffef237e,0xffb71ba3,0xff6422b4,0xff0e37ac,0xff00558c
+  ,0xff00725e,0xff00882d,0xff009007,0xff478900,0xff9d7300,0xff000000,0xff000000,0xff000000
+  ,0xffffffff,0xffffac67,0xffff8d95,0xffff75c8,0xffff6af2,0xffc56fff,0xff6a83ff,0xff1fa0e6
+  ,0xff00bfb8,0xff01d885,0xff35e35b,0xff88de45,0xffe3ca49,0xff4e4e4e,0xff000000,0xff000000
+  ,0xffffffff,0xffffe0bf,0xffffd3d1,0xffffc9e6,0xffffc3f7,0xffeec4ff,0xffc9cbff,0xffa9d7f7
+  ,0xff97e3e6,0xff97eed1,0xffa9f3bf,0xffc9f2b5,0xffeeebb5,0xffb8b8b8,0xff000000,0xff000000
+  ]
 
 ----------------------------------------------------------------------
 -- registers
@@ -152,16 +253,13 @@ makeRegisters s = do
       | a == 0x2000 -> ppuCtrl s
       | a == 0x2001 -> dummyRef_quiet "ppuMask" a
       | a == 0x2002 -> ppuStatus s
-
+      | a == 0x2003 -> dummyRef_quiet "oamAddr" a
+      -- 2004?
       | a == 0x2005 -> dummyRef_quiet "ppuScroll" a
       | a == 0x2006 -> ppuAddr s
       | a == 0x2007 -> ppuData s
-
-      | a == 0x2003 -> dummyRef_quiet "oamAddr" a
       | a == 0x4014 -> dummyRef_quiet "oamDMA" a
-
-      | otherwise ->
-        error $ printf "PPU.makeRegisters: address = $%04X" a
+      | otherwise -> error $ printf "PPU.makeRegisters: address = $%04X" a
 
 ppuCtrl :: State -> Ref U8
 ppuCtrl State{control} = Ref {onRead,onWrite}
@@ -203,7 +301,7 @@ ppuData s@State{bus,addr} = Ref {onRead,onWrite}
 incrementAddr :: State -> Eff ()
 incrementAddr State{control,addr} = do
   Control{vramAddressIncrement32=inc32} <- read control
-  --Log (show ("inc32",inc32)) -- see False and True
+  --Log (show ("inc32",inc32)) -- see False and True. Good
   update (+ (if inc32 then 32 else 1)) addr
 
 writeLO :: U8 -> Ref Addr -> Eff ()
@@ -219,7 +317,7 @@ writeHI hi r = do
   write (makeAddr HL {hi,lo}) r
 
 ----------------------------------------------------------------------
--- PPU Bus
+-- PPU Bus -- TODO: move to System?
 
 makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
 makePpuBus mapper = do
@@ -255,19 +353,19 @@ data State = State -- TODO: rename Context? (because value never changes!)
   { bus :: Bus
   , control :: Ref Control
   , status :: Status
-
   , latch :: Ref Bool
   , addr :: Ref Addr
+  , mode :: Ref Mode
   }
 
-initState :: Mapper -> Eff State
-initState mapper = do
+initState :: Mapper -> Ref Mode -> Eff State
+initState mapper mode =  do
   bus <- makePpuBus mapper
   control <- DefineRegister (byte2control 0)
   status <- initStatus
   latch <- DefineRegister False
   addr <- DefineRegister 0
-  pure State {bus,control,status,latch,addr}
+  pure State {bus,control,status,latch,addr,mode}
 
 ----------------------------------------------------------------------
 -- ControlByte
@@ -317,59 +415,3 @@ readStatus Status{spriteOverflow,sprite0Hit,isInVBlankInterval} = do
     (if spriteOverflow then 0x20 else 0) .|.
     (if sprite0Hit then 0x40 else 0) .|.
     (if isInVBlankInterval then 0x80 else 0)
-
-----------------------------------------------------------------------
--- Palette
-
-type Colour = RGB
-
-data Palette = Palette (ColourIndex -> Colour)
-
-lookupPalette :: Palette -> ColourIndex -> Colour
-lookupPalette (Palette f) = f
-
-grayPalette :: Palette
-grayPalette = Palette $ \case
-  I0 -> grey 0x00
-  I1 -> grey 0x55
-  I2 -> grey 0xAA
-  I3 -> grey 0xFF
-  where
-    grey x = rgb x x x
-    rgb r g b = V4 r g b 0
-
-type ColourIndex = U2
-
-data U2 = I0 | I1 | I2 | I3
-  deriving (Enum)
-
-----------------------------------------------------------------------
--- Tile
-
-type PatternTableId = Bool
-type TileId = Int
-
-data Tile = TileX
-  { loRow :: U8
-  , hiRow :: U8
-  }
-
-makeTile :: State -> PatternTableId -> TileId -> U8 -> Eff Tile
-makeTile State{bus} patternTableId tileId y = do
-  let tableAddr = if patternTableId then 0x1000 else 0x0000
-  let loPlaneAddr = tableAddr + fromIntegral tileId * 16
-  let hiPlaneAddr = loPlaneAddr + 8
-  loRow <- bus (loPlaneAddr + fromIntegral y) >>= read
-  hiRow <- bus (hiPlaneAddr + fromIntegral y) >>= read
-  pure TileX {loRow,hiRow}
-
-getColourIndex :: Tile -> U8 -> ColourIndex
-getColourIndex TileX{loRow,hiRow} x = do
-  let i = 7 - fromIntegral x
-  let lo = loRow `testBit` i
-  let hi = hiRow `testBit` i
-  case (hi,lo) of
-    (False,False) -> I0
-    (False,True) -> I1
-    (True,False) -> I2
-    (True,True) -> I3

@@ -18,12 +18,11 @@ main = do
     False -> do
       let
         system = do
-          ppuState <- PPU.initState mapper
           mode <- DefineRegister PPU.initMode
+          ppuState <- PPU.initState mapper mode
           let graphics = PPU.Graphics
                 { plot = \_ _ _ -> pure () -- ignore plottng
                 , displayFrame = \n -> Log (printf ".%d" n)
-                , mode
                 }
           makeSystem config mapper ppuState graphics
 

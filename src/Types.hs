@@ -24,4 +24,4 @@ splitAddr :: Addr -> HL U8
 splitAddr addr = do
   HL { hi = fromIntegral (addr `shiftR` 8), lo = fromIntegral (addr .&. 0xff) }
 
-type RGB = V4 U8
+type RGB = V4 U8 -- TODO rename Colour
