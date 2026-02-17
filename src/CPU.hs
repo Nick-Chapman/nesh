@@ -29,7 +29,7 @@ vector = \case
 trigger :: State -> Interrupt -> Eff ()
 trigger s@State{bus,ip,flags} interrupt = do
   --Print $ printf "[%s]" (show interrupt)
-  Print $ "."
+  --Print $ "n"
   ignore <- if interrupt == IRQ then readFlag s I else pure False
   if ignore then pure () else do
     read ip >>= push16 s

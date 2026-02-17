@@ -5,13 +5,12 @@ import CPU qualified (cpu,mkState,trigger,Interrupt(NMI))
 import CommandLine (Config(..))
 import Framework (Eff(..),Ref)
 import Mapper (Mapper)
-import PPU qualified (ppu,makeRegisters,initState,Mode,Graphics)
+import PPU qualified (ppu,initState,Mode,Graphics)
 
 makeSystem  :: Config -> Mapper -> Ref PPU.Mode -> PPU.Graphics -> Eff ()
 makeSystem config mapper mode graphics = do
   ppuState <- PPU.initState mapper mode
-  let ppuRegisers = PPU.makeRegisters ppuState
-  bus <- makeCpuBus mapper ppuRegisers
+  bus <- makeCpuBus mapper ppuState
   cpuState <- CPU.mkState bus
   let cpu = CPU.cpu config cpuState
   let triggerNMI = CPU.trigger cpuState CPU.NMI

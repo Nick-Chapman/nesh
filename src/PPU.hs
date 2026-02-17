@@ -1,6 +1,6 @@
 module PPU
   ( State, initState
-  , makeRegisters
+  , registers, oamDMA
   , ppu
   , Mode, initMode, nextMode
   , Graphics(..)
@@ -18,8 +18,6 @@ import Prelude hiding (read)
 import SDL (V4(..))
 import Text.Printf (printf)
 import Types (Addr,U8,RGB,HL(..),makeAddr,splitAddr)
-
---import CPU qualified --(State)
 
 ----------------------------------------------------------------------
 -- Graphics
@@ -248,20 +246,19 @@ colours =
 ----------------------------------------------------------------------
 -- registers
 
-makeRegisters :: State -> Bus
-makeRegisters s = do
+registers :: State -> Bus
+registers s = do
   \a -> pure $ do
     if
       | a == 0x2000 -> ppuCtrl s
       | a == 0x2001 -> dummyRef_quiet "ppuMask" a
       | a == 0x2002 -> ppuStatus s
-      | a == 0x2003 -> oamAddrRegister s
-      | a == 0x2004 -> oamDataRegister s
+      | a == 0x2003 -> oamAddr s
+--      | a == 0x2004 -> _oamData s -- TODO: not yet hit
       | a == 0x2005 -> dummyRef_quiet "ppuScroll" a
       | a == 0x2006 -> ppuAddr s
       | a == 0x2007 -> ppuData s
-      | a == 0x4014 -> oamDMA s
-      | otherwise -> error $ printf "PPU.makeRegisters: address = $%04X" a
+      | otherwise -> error $ printf "PPU.registers: address = $%04X" a
 
 ppuCtrl :: State -> Ref U8
 ppuCtrl State{control} = Ref {onRead,onWrite}
@@ -328,52 +325,34 @@ writeHI hi r = do
 ----------------------------------------------------------------------
 -- OAM
 
-oamAddrRegister :: State -> Ref U8
-oamAddrRegister State{oamAddr} = Ref {onRead,onWrite}
+oamAddr :: State -> Ref U8
+oamAddr State{oamOffset} = Ref {onRead,onWrite}
   where
     onRead = Error "oamAddrRegister: read"
-    onWrite v = do write v oamAddr
+    onWrite v = do write v oamOffset
 
-
-oamDataRegister :: State -> Ref U8
-oamDataRegister State{} = Ref {onRead,onWrite}
+_oamData :: State -> Ref U8 -- TODO: not yet hit
+_oamData State{oamOffset,oamRam} = Ref {onRead,onWrite}
   where
-    onRead = Error "oamDataRegister: read" -- TODO
-    onWrite _ = Error "oamDataRegister: write" -- TODO
+    onRead = do
+      off <- read oamOffset
+      read (oamRam (fromIntegral off))
+    onWrite v = do
+      off <- read oamOffset
+      write v (oamRam (fromIntegral off))
+      write (off+1) oamOffset
 
--- class OAMData extends InMemoryRegister.PPU {
---   onRead() {
---     const oamAddress = this.ppu.registers.oamAddr.value
---     return this.ppu.memory.oamRam[oamAddress]
---   }
---   onWrite(value) {
---     const oamAddress = this.ppu.registers.oamAddr.value
---     this.ppu.memory.oamRam[oamAddress] = value
---     this.ppu.registers.oamAddr.setValue(oamAddress + 1)
---   }
--- }
-
-oamDMA :: State -> Ref U8
-oamDMA State{} = Ref {onRead,onWrite}
+oamDMA :: State -> Bus -> Ref U8
+oamDMA State{oamRam} cpuBus = Ref {onRead,onWrite}
   where
     onRead = Error "oamDMA: read"
-    onWrite _ =
-      --Error "oamDMA: write" -- TODO
+    onWrite hi = do
+      forM_ [0..255] $ \lo -> do
+        let a = makeAddr HL {hi,lo}
+        v <- cpuBus a >>= read
+        write v (oamRam (fromIntegral lo))
+      -- extraCycles += 513 -- TODO
       pure ()
-
--- class OAMDMA extends InMemoryRegister.PPU {
---   onWrite(value) {
---     let cpu = this.ppu.cpu
---     /* TODO: IMPLEMENT */
---     for (let i = 0; i < 256; i++) {
---       const address = value << 8 | i
---       const data = cpu.memory.read(address)
---       this.ppu.memory.oamRam[i] = data
---     }
---     cpu.extraCycles += 513
---   }
--- }
-
 
 ----------------------------------------------------------------------
 -- PPU Bus -- TODO: move to System?
@@ -415,10 +394,9 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , latch :: Ref Bool
   , addr :: Ref Addr
   , buffer :: Ref U8
-  , oamAddr :: Ref U8
+  , oamOffset :: Ref U8
   , oamRam :: Int -> Ref U8
   , mode :: Ref Mode
---  , cpuState :: CPU.State
   }
 
 initState :: Mapper -> Ref Mode -> Eff State
@@ -429,11 +407,9 @@ initState mapper mode =  do
   latch <- DefineRegister False
   addr <- DefineRegister 0
   buffer <- DefineRegister 0
-  oamAddr <- DefineRegister 0
+  oamOffset <- DefineRegister 0
   oamRam <- DefineMemory 256
-  pure State {bus,control,status,latch,addr,buffer,oamAddr,oamRam,mode
-             --,cpuState
-             }
+  pure State {bus,control,status,latch,addr,buffer,oamOffset,oamRam,mode} -- TODO recordWildcards
 
 ----------------------------------------------------------------------
 -- ControlByte

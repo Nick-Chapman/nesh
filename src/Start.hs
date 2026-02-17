@@ -20,7 +20,8 @@ main = do
         system = do
           mode <- DefineRegister PPU.initMode
           let plot _ _ _ = pure () -- ignore plottng
-          let displayFrame n = Log (printf ".%d" n)
+          let _displayFrame n = Log (printf ".%d" n)
+          let displayFrame _ = Print "."
           let graphics = PPU.Graphics { plot, displayFrame }
           makeSystem config mapper mode graphics
 
