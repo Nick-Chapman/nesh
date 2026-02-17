@@ -7,8 +7,7 @@ import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),runEffect,update,read)
 import Mapper (Mapper)
-import PPU (initMode,nextMode)
-import PPU qualified (Graphics(..),initState)
+import PPU qualified (initMode,nextMode,Graphics(..))
 import Prelude hiding (read)
 import SDL (V2(..),V4(..),($=))
 import System (makeSystem)
@@ -55,8 +54,7 @@ main config mapper = do
       pure $ fromIntegral $ max (t2-t1) 1
 
   runEffect $ do
-    mode <- DefineRegister initMode
-    ppuState <- PPU.initState mapper mode
+    mode <- DefineRegister PPU.initMode
     let
       onPlot :: CInt -> CInt -> RGB -> Eff ()
       onPlot x0 y0 col = IO $ do
@@ -82,15 +80,10 @@ main config mapper = do
         let quit = any isQuitEvent events
         let tab = any isTabEvent events
         if quit then Halt else pure ()
-        if tab then update nextMode mode else pure ()
+        if tab then update PPU.nextMode mode else pure ()
 
-    let
-      graphics = PPU.Graphics
-        { plot = onPlot
-        , displayFrame
-        }
-
-    makeSystem config mapper ppuState graphics
+    let graphics = PPU.Graphics { plot = onPlot, displayFrame }
+    makeSystem config mapper mode graphics
 
   putOut "\n"
   SDL.destroyRenderer renderer

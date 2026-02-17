@@ -1,14 +1,15 @@
 module System (makeSystem) where -- The full system under emulatiion
 
 import Bus (makeCpuBus)
-import CPU qualified (mkState,cpu,Interrupt(NMI),trigger)
+import CPU qualified (cpu,mkState,trigger,Interrupt(NMI))
 import CommandLine (Config(..))
-import Framework (Eff(..))
+import Framework (Eff(..),Ref)
 import Mapper (Mapper)
-import PPU qualified (State,makeRegisters,ppu,Graphics(..))
+import PPU qualified (ppu,makeRegisters,initState,Mode,Graphics)
 
-makeSystem :: Config -> Mapper -> PPU.State -> PPU.Graphics -> Eff ()
-makeSystem config mapper ppuState graphics = do
+makeSystem  :: Config -> Mapper -> Ref PPU.Mode -> PPU.Graphics -> Eff ()
+makeSystem config mapper mode graphics = do
+  ppuState <- PPU.initState mapper mode
   let ppuRegisers = PPU.makeRegisters ppuState
   bus <- makeCpuBus mapper ppuRegisers
   cpuState <- CPU.mkState bus

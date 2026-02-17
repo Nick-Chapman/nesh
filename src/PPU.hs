@@ -19,6 +19,8 @@ import SDL (V4(..))
 import Text.Printf (printf)
 import Types (Addr,U8,RGB,HL(..),makeAddr,splitAddr)
 
+--import CPU qualified --(State)
+
 ----------------------------------------------------------------------
 -- Graphics
 
@@ -253,12 +255,12 @@ makeRegisters s = do
       | a == 0x2000 -> ppuCtrl s
       | a == 0x2001 -> dummyRef_quiet "ppuMask" a
       | a == 0x2002 -> ppuStatus s
-      | a == 0x2003 -> dummyRef_quiet "oamAddr" a
-      -- 2004?
+      | a == 0x2003 -> oamAddrRegister s
+      | a == 0x2004 -> oamDataRegister s
       | a == 0x2005 -> dummyRef_quiet "ppuScroll" a
       | a == 0x2006 -> ppuAddr s
       | a == 0x2007 -> ppuData s
-      | a == 0x4014 -> dummyRef_quiet "oamDMA" a
+      | a == 0x4014 -> oamDMA s
       | otherwise -> error $ printf "PPU.makeRegisters: address = $%04X" a
 
 ppuCtrl :: State -> Ref U8
@@ -324,6 +326,56 @@ writeHI hi r = do
   write (makeAddr HL {hi,lo}) r
 
 ----------------------------------------------------------------------
+-- OAM
+
+oamAddrRegister :: State -> Ref U8
+oamAddrRegister State{oamAddr} = Ref {onRead,onWrite}
+  where
+    onRead = Error "oamAddrRegister: read"
+    onWrite v = do write v oamAddr
+
+
+oamDataRegister :: State -> Ref U8
+oamDataRegister State{} = Ref {onRead,onWrite}
+  where
+    onRead = Error "oamDataRegister: read" -- TODO
+    onWrite _ = Error "oamDataRegister: write" -- TODO
+
+-- class OAMData extends InMemoryRegister.PPU {
+--   onRead() {
+--     const oamAddress = this.ppu.registers.oamAddr.value
+--     return this.ppu.memory.oamRam[oamAddress]
+--   }
+--   onWrite(value) {
+--     const oamAddress = this.ppu.registers.oamAddr.value
+--     this.ppu.memory.oamRam[oamAddress] = value
+--     this.ppu.registers.oamAddr.setValue(oamAddress + 1)
+--   }
+-- }
+
+oamDMA :: State -> Ref U8
+oamDMA State{} = Ref {onRead,onWrite}
+  where
+    onRead = Error "oamDMA: read"
+    onWrite _ =
+      --Error "oamDMA: write" -- TODO
+      pure ()
+
+-- class OAMDMA extends InMemoryRegister.PPU {
+--   onWrite(value) {
+--     let cpu = this.ppu.cpu
+--     /* TODO: IMPLEMENT */
+--     for (let i = 0; i < 256; i++) {
+--       const address = value << 8 | i
+--       const data = cpu.memory.read(address)
+--       this.ppu.memory.oamRam[i] = data
+--     }
+--     cpu.extraCycles += 513
+--   }
+-- }
+
+
+----------------------------------------------------------------------
 -- PPU Bus -- TODO: move to System?
 
 makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
@@ -363,7 +415,10 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , latch :: Ref Bool
   , addr :: Ref Addr
   , buffer :: Ref U8
+  , oamAddr :: Ref U8
+  , oamRam :: Int -> Ref U8
   , mode :: Ref Mode
+--  , cpuState :: CPU.State
   }
 
 initState :: Mapper -> Ref Mode -> Eff State
@@ -374,7 +429,11 @@ initState mapper mode =  do
   latch <- DefineRegister False
   addr <- DefineRegister 0
   buffer <- DefineRegister 0
-  pure State {bus,control,status,latch,addr,buffer,mode}
+  oamAddr <- DefineRegister 0
+  oamRam <- DefineMemory 256
+  pure State {bus,control,status,latch,addr,buffer,oamAddr,oamRam,mode
+             --,cpuState
+             }
 
 ----------------------------------------------------------------------
 -- ControlByte
