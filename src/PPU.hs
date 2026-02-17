@@ -289,9 +289,16 @@ ppuAddr State{addr,latch} = Ref {onRead,onWrite}
         False -> writeHI v addr
 
 ppuData :: State -> Ref U8
-ppuData s@State{bus,addr} = Ref {onRead,onWrite}
+ppuData s@State{bus,addr,buffer} = Ref {onRead,onWrite}
   where
-    onRead = Error "ppuData/read"
+    onRead = do
+      a <- read addr
+      v <- bus a >>= read
+      last <- read buffer
+      write v buffer
+      incrementAddr s
+      if | a >= 0x3f00 && a <= 0x3ff -> pure v
+         | otherwise -> pure last
     onWrite v = do
       a <- read addr
       --Log $ (printf "ppuData (write) addr (%04x) = %02x" a v)
@@ -355,6 +362,7 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , status :: Status
   , latch :: Ref Bool
   , addr :: Ref Addr
+  , buffer :: Ref U8
   , mode :: Ref Mode
   }
 
@@ -365,7 +373,8 @@ initState mapper mode =  do
   status <- initStatus
   latch <- DefineRegister False
   addr <- DefineRegister 0
-  pure State {bus,control,status,latch,addr,mode}
+  buffer <- DefineRegister 0
+  pure State {bus,control,status,latch,addr,buffer,mode}
 
 ----------------------------------------------------------------------
 -- ControlByte
