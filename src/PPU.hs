@@ -270,6 +270,8 @@ ppuStatus :: State -> Ref U8
 ppuStatus State{status} = Ref {onRead,onWrite}
   where
     onRead = do
+      --this.isInVBlankInterval = 0 -- TODO
+      --this.ppu.registers.ppuAddr.latch = false --TODO
       v <- readStatus status
       --Log $ printf "ppuStatus: read -> %02x" v
       pure v
