@@ -68,6 +68,8 @@ data Eff a where
 
   DefineRegister :: a -> Eff (Ref a)
   DefineMemory :: Int -> Eff (Int -> Ref U8)
+
+  Cycles :: Eff Int
   Parallel :: Eff () -> Eff () -> Eff ()
   AdvancePPU :: Int -> Eff () -- we synchronise everything on PPU ticks
 
@@ -112,6 +114,10 @@ runEffect eff0 = loop s0 eff0 k0
             let onWrite v = IO (writeIOArray mem addr v)
             Ref {onRead,onWrite} -- TODO: optimization(?) pre-build each Ref
         k f s
+
+      Cycles -> do
+        let State{cycles=now} = s
+        k now s
 
       Parallel m1 m2 -> do
         let State{cycles=now} = s

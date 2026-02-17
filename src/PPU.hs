@@ -343,7 +343,7 @@ _oamData State{oamOffset,oamRam} = Ref {onRead,onWrite}
       write (off+1) oamOffset
 
 oamDMA :: State -> Bus -> Ref U8
-oamDMA State{oamRam} cpuBus = Ref {onRead,onWrite}
+oamDMA State{oamRam,extraCpuCycles} cpuBus = Ref {onRead,onWrite}
   where
     onRead = Error "oamDMA: read"
     onWrite hi = do
@@ -351,7 +351,7 @@ oamDMA State{oamRam} cpuBus = Ref {onRead,onWrite}
         let a = makeAddr HL {hi,lo}
         v <- cpuBus a >>= read
         write v (oamRam (fromIntegral lo))
-      -- extraCycles += 513 -- TODO
+      update (+513) extraCpuCycles
       pure ()
 
 ----------------------------------------------------------------------
@@ -397,10 +397,11 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , oamOffset :: Ref U8
   , oamRam :: Int -> Ref U8
   , mode :: Ref Mode
+  , extraCpuCycles :: Ref Int
   }
 
-initState :: Mapper -> Ref Mode -> Eff State
-initState mapper mode =  do
+initState :: Mapper -> Ref Mode -> Ref Int -> Eff State
+initState mapper mode extraCpuCycles =  do
   bus <- makePpuBus mapper
   control <- DefineRegister (byte2control 0)
   status <- initStatus
@@ -409,7 +410,9 @@ initState mapper mode =  do
   buffer <- DefineRegister 0
   oamOffset <- DefineRegister 0
   oamRam <- DefineMemory 256
-  pure State {bus,control,status,latch,addr,buffer,oamOffset,oamRam,mode} -- TODO recordWildcards
+  pure State {bus,control,status,latch,addr,buffer,oamOffset,oamRam,mode
+             ,extraCpuCycles
+             } -- TODO recordWildcards
 
 ----------------------------------------------------------------------
 -- ControlByte

@@ -336,15 +336,14 @@ data State = State
   , cyc :: Ref Int -- total cpu cycles executed
   }
 
-mkState :: Bus -> Eff State
-mkState bus = do
+mkState :: Ref Int -> Bus -> Eff State
+mkState extraCycles bus = do
   ip <- DefineRegister 0
   a <- DefineRegister 0
   x <- DefineRegister 0
   y <- DefineRegister 0
   flags <- DefineRegister 0x24
   sp <- DefineRegister 0xfd
-  extraCycles <- DefineRegister 0
   cyc <- DefineRegister 0
   pure $ State { ip, a, x, y, flags, sp, bus, extraCycles, cyc }
 
