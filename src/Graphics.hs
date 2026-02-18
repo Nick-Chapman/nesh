@@ -74,7 +74,7 @@ main config mapper = do
             let fpsAchieved = fromIntegral titleUpdateFrames * 1000 / actualDuration
             mode <- read mode
             let title = printf "Dishonesty (%s) fps=[%.0g]" (show mode) fpsAchieved
-            IO (SDL.windowTitle win $= Text.pack title)
+            IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
         IO $ SDL.present renderer
         events <- IO $ SDL.pollEvents
         let quit = any isQuitEvent events
