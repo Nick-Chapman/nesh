@@ -109,21 +109,21 @@ normalOperation :: Eff () -> State -> Graphics -> Eff ()
 normalOperation triggerNMI s@State{control,status} graphics = timing
   where
     timing = do
-      forM_ [(-1)..261] $ \(y::Int) -> do
+      forM_ [(-1)..261] $ \(y::Int) -> do -- TODO: CInt
         when (y == -1) preVisibleLine
         when (y >= 0 && y <= 239) $ visibleLine y
         when (y == 241) vblankLine
         AdvancePPU 341
 
-    Status{isInVBlankInterval} = status
+    Status{isInVBlankInterval,spriteOverflow} = status
 
     preVisibleLine = do
       write False isInVBlankInterval
-      pure ()
+      write False spriteOverflow
 
     visibleLine y = do
-      renderScanLine s graphics y
-      pure ()
+      renderScanLineBG s graphics y
+      renderScanLineSprites s graphics (fromIntegral y)
 
     vblankLine = do
       write True isInVBlankInterval
@@ -131,8 +131,8 @@ normalOperation triggerNMI s@State{control,status} graphics = timing
       when gen $ triggerNMI
 
 
-renderScanLine :: State -> Graphics -> Int -> Eff ()
-renderScanLine s@State{bus,control} Graphics{plot} y = do
+renderScanLineBG :: State -> Graphics -> Int -> Eff ()
+renderScanLineBG s@State{bus,control} Graphics{plot} y = do
   Control{nameTableId, backgroundPatternTableId} <- read control
   let nameTableLocation :: Addr = 0x2000 + fromIntegral (fromEnum nameTableId * 1024)
   forM_ [0 .. 31] $ \tileX -> do
@@ -178,7 +178,7 @@ getBackgroundPaletteId State{bus} nameTableId x y = do
 -- tile
 
 type PatternTableId = Bool
-type TileId = Int
+type TileId = Int -- TODO U8
 
 data Tile = TileX
   { loRow :: U8
@@ -431,3 +431,65 @@ readStatus Status{spriteOverflow,sprite0Hit,isInVBlankInterval} = do
     (if spriteOverflow then 0x20 else 0) .|.
     (if sprite0Hit then 0x40 else 0) .|.
     (if isInVBlankInterval then 0x80 else 0)
+
+----------------------------------------------------------------------
+-- Sprites
+
+renderScanLineSprites :: State -> Graphics -> CInt -> Eff ()
+renderScanLineSprites state graphics y = do
+  all <- sequence [ createSprite state id | id::Int <- [0..63] ]
+  let visible = [ sprite | sprite <- all, shouldRenderInScanLine sprite y ]
+  when (length visible > 8) $ do
+    let State {status=Status{spriteOverflow}} = state
+    write True spriteOverflow
+  sequence_ [ renderSprite state graphics y sprite | sprite <- take 8 visible ]
+
+data Sprite = Sprite
+  { spriteX :: U8
+  , spriteY :: U8
+  , is8x16 :: Bool
+  , patternTableId :: PatternTableId
+  , tileId :: U8
+  , paletteId :: Int
+  }
+
+createSprite :: State -> Int -> Eff Sprite
+createSprite State{control,oamRam} id = do
+  Control{sprite8x8PatternTableId,spriteSize=is8x16} <- read control
+  let baseAddress = 4 * id
+  byte0 <- read (oamRam baseAddress)
+  byte1 <- read (oamRam (baseAddress + 1))
+  byte2 <- read (oamRam (baseAddress + 2))
+  byte3 <- read (oamRam (baseAddress + 3))
+  let spriteX = byte3
+  let spriteY = byte0 + 1
+  let patternTableId = if is8x16 then byte1 `testBit` 0 else sprite8x8PatternTableId
+  let tileId = if is8x16 then byte1 .&. 0xfe else byte1
+  let paletteId = 4 + fromIntegral (byte2 .&. 0x3)
+  pure Sprite {spriteX,spriteY,is8x16,patternTableId,tileId,paletteId}
+
+shouldRenderInScanLine :: Sprite -> CInt -> Bool
+shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
+  let diffY = y - fromIntegral spriteY
+  let height = if is8x16 then 16 else 8
+  diffY >= 0 && diffY < height
+
+renderSprite :: State -> Graphics -> CInt -> Sprite -> Eff ()
+renderSprite s@State{} Graphics{plot} y sprite = do
+  let Sprite{spriteX,spriteY,patternTableId,tileId,paletteId} = sprite
+  let insideY :: CInt = y - fromIntegral spriteY
+  let tileInsideY :: CInt = insideY `mod` 8
+  tile <- makeTile s patternTableId (fromIntegral tileId) (fromIntegral tileInsideY)
+  paletteColour1 <- getColour s paletteId I1
+  paletteColour2 <- getColour s paletteId I2
+  paletteColour3 <- getColour s paletteId I3
+  forM_ [0..7] $ \(insideX::CInt) -> do
+    let colourIndex = getColourIndex tile (fromIntegral insideX)
+    when (colourIndex /= I0) $ do
+      let x :: CInt = fromIntegral spriteX + insideX
+      let col = case colourIndex of
+                     I0 -> error "sprite/colourIndex/0"
+                     I1 -> paletteColour1
+                     I2 -> paletteColour2
+                     I3 -> paletteColour3
+      plot x y col

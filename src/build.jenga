@@ -22,7 +22,8 @@ default-extensions:
   echo DuplicateRecordFields >> $out
   echo GADTs >> $out
   echo MultiWayIf >> $out
-  echo Strict >> $out #make undefined less joyfull to work with during dev!
+  # Strict is not making things faster any more!
+  # echo Strict >> $out #make undefined less joyfull to work with during dev!
 
 packages:
   echo bytestring >> $@
