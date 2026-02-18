@@ -37,10 +37,10 @@ loadMapper path = do
 
   --let ntm = if byteToUnsigned (bs !! 6) `testBit` 0 then NTM_Horizontal else NTM_Vertical
 
-  when (mapperNumber /= 0) $ error (printf "Unsupport mapper number: %d" mapperNumber)
-  when (length bs /= headerSize + (x * prgSize) + (y * chrSize)) $ error "bad file size"
+  when (mapperNumber /= 0) $ printf "Unsupport mapper number: %d\n" mapperNumber
+  when (length bs /= headerSize + (x * prgSize) + (y * chrSize)) $ printf "bad file size\n"
 
-  when (y /= 1) $ error "unexpected number of CHR roms"
+  when (y /= 1) $ printf "unexpected number of CHR roms: %d\n" y
 
   let
     mappedPrgAddress =
