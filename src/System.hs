@@ -40,7 +40,7 @@ makeCpuBus mapper ppuState = do
         | a == 0x4015 -> pure $ dummyRef_quiet "APU status/control" a
         | a == 0x4016 -> pure $ dummyRef_quiet "controller-port1" a
         | a == 0x4017 -> pure $ dummyRef_quiet "controller-port2" a
-        | a >= 0xc000 && a <= 0xffff -> pure $ Mapper.busCPU mapper (a - 0xC000)
+        | a >= 0x8000 && a <= 0xffff -> pure $ Mapper.busCPU mapper a
         | otherwise -> error $ printf "makeCpuBus: address = $%04X" a
 
   pure cpuBus
