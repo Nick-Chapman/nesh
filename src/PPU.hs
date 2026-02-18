@@ -449,7 +449,7 @@ data Sprite = Sprite
   , spriteY :: U8
   , is8x16 :: Bool
   , patternTableId :: PatternTableId
-  , tileId :: U8
+  , topTileId :: U8
   , paletteId :: Int
   }
 
@@ -464,9 +464,9 @@ createSprite State{control,oamRam} id = do
   let spriteX = byte3
   let spriteY = byte0 + 1
   let patternTableId = if is8x16 then byte1 `testBit` 0 else sprite8x8PatternTableId
-  let tileId = if is8x16 then byte1 .&. 0xfe else byte1
+  let topTileId = if is8x16 then byte1 .&. 0xfe else byte1
   let paletteId = 4 + fromIntegral (byte2 .&. 0x3)
-  pure Sprite {spriteX,spriteY,is8x16,patternTableId,tileId,paletteId}
+  pure Sprite {spriteX,spriteY,is8x16,patternTableId,topTileId,paletteId}
 
 shouldRenderInScanLine :: Sprite -> CInt -> Bool
 shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
@@ -476,8 +476,9 @@ shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
 
 renderSprite :: State -> Graphics -> CInt -> Sprite -> Eff ()
 renderSprite s@State{} Graphics{plot} y sprite = do
-  let Sprite{spriteX,spriteY,patternTableId,tileId,paletteId} = sprite
+  let Sprite{spriteX,spriteY,patternTableId,topTileId,paletteId} = sprite
   let insideY :: CInt = y - fromIntegral spriteY
+  let tileId = topTileId + (if insideY > 7 then 1 else 0)
   let tileInsideY :: CInt = insideY `mod` 8
   tile <- makeTile s patternTableId (fromIntegral tileId) (fromIntegral tileInsideY)
   paletteColour1 <- getColour s paletteId I1

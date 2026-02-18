@@ -29,7 +29,7 @@ makeCpuBus mapper ppuState = do
   let
     cpuBus a = do
       --when (a == 0xfffa) $ Log "Reading from NMI interrupt vector"
-      when (a == 0xfffc) $ Log "Reading from Reset interrupt vector"
+      --when (a == 0xfffc) $ Log "Reading from Reset interrupt vector"
       when (a == 0xfffe) $ Log "Reading from IRQ/BRK interrupt vector"
       if
         -- TODO: mirrors
