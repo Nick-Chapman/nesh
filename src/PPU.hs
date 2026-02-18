@@ -12,8 +12,6 @@ import Data.Bits (testBit,(.&.),(.|.),shiftR)
 import Data.Word (Word32)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef_quiet)
-import Mapper (Mapper)
-import Mapper qualified (busPPU)
 import Prelude hiding (read)
 import SDL (V4(..))
 import Text.Printf (printf)
@@ -357,36 +355,6 @@ oamDMA State{oamRam,extraCpuCycles} cpuBus = Ref {onRead,onWrite}
       pure ()
 
 ----------------------------------------------------------------------
--- PPU Bus -- TODO: move to System?
-
-makePpuBus :: Mapper -> Eff Bus -- internal PPU bus containing vmam, pallete ram & chr rom
-makePpuBus mapper = do
-  vram <- DefineMemory 4096 -- TODO: really only 2K, with mirroring
-  paletteRam <- DefineMemory 32
-  pure $ \a -> pure $ do
-    if
-      | a <= 0x1fff
-        -> Mapper.busPPU mapper a
-
-      -- vram
-      | a >= 0x2000 && a <= 0x2fff
-        -> vram (fromIntegral a - 0x2000)
-
-      {- vram mirror -- TODO
-      | a >= 0x3000 && a <= 0x3eff
-        -> vram (fromIntegral a - 0x3000) -}
-
-      -- palette ram
-      | a >= 0x3f00 && a <= 0x3f1f -> paletteRam (fromIntegral a - 0x3f00)
-
-      {- palette ram mirrors -- TODO
-      | a >= 0x3f20 && a <= 0x3fff
-        -> paletteRam ((a - 0x3f20) `mod` 0x20) -}
-
-      | otherwise -> do
-        error $ printf "PpuBus: unknown address = $%04X" a
-
-----------------------------------------------------------------------
 -- PPU State
 
 data State = State -- TODO: rename Context? (because value never changes!)
@@ -402,9 +370,8 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , extraCpuCycles :: Ref Int
   }
 
-initState :: Mapper -> Ref Mode -> Ref Int -> Eff State
-initState mapper mode extraCpuCycles =  do
-  bus <- makePpuBus mapper
+initState :: Bus -> Ref Mode -> Ref Int -> Eff State
+initState bus mode extraCpuCycles =  do
   control <- DefineRegister (byte2control 0)
   status <- initStatus
   latch <- DefineRegister False
