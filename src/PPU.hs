@@ -252,7 +252,7 @@ registers s = do
       | a == 0x2001 -> dummyRef_quiet "ppuMask" a
       | a == 0x2002 -> ppuStatus s
       | a == 0x2003 -> oamAddr s
---      | a == 0x2004 -> _oamData s -- TODO: not yet hit
+      | a == 0x2004 -> oamData s
       | a == 0x2005 -> dummyRef_quiet "ppuScroll" a
       | a == 0x2006 -> ppuAddr s
       | a == 0x2007 -> ppuData s
@@ -331,8 +331,8 @@ oamAddr State{oamOffset} = Ref {onRead,onWrite}
     onRead = Error "oamAddrRegister: read"
     onWrite v = do write v oamOffset
 
-_oamData :: State -> Ref U8 -- TODO: not yet hit
-_oamData State{oamOffset,oamRam} = Ref {onRead,onWrite}
+oamData :: State -> Ref U8
+oamData State{oamOffset,oamRam} = Ref {onRead,onWrite}
   where
     onRead = do
       off <- read oamOffset
