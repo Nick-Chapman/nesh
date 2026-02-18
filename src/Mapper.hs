@@ -3,27 +3,30 @@ module Mapper
   , busCPU, busPPU
   ) where
 
---import Data.Bits (testBit)
---import PPU.PMem(NametableMirroring(..))
-import CHR qualified (read)
 import Control.Monad (when)
+import Data.Array (Array,(!),listArray)
 import Data.ByteString.Internal (w2c)
 import Framework (Eff(..),Ref(..))
-import PRG qualified (read)
 import Types (U8,Addr)
-import qualified CHR (ROM,init)
 import qualified Data.ByteString as BS (readFile,unpack)
-import qualified PRG (ROM,init)
+
+data Rom = Rom { arr :: Array Addr U8 }
+
+initRom :: [U8] -> Rom
+initRom bytes = Rom { arr = listArray (0,n-1) bytes }
+  where n = fromIntegral $ length bytes
+
+readRom :: Rom -> Addr -> U8
+readRom Rom{arr} a = arr ! a
 
 data Mapper = Mapper
   { header :: [U8]
-  , prgs :: [PRG.ROM]
-  , chrs :: [CHR.ROM]
---  , ntm :: NametableMirroring
+  , prgs :: [Rom]
+  , chrs :: [Rom]
   }
 
 busCPU :: Mapper -> Addr -> Ref U8
-busCPU Mapper{prgs} a = readonly (PRG.read prg a)
+busCPU Mapper{prgs} a = readonly (readRom prg a)
   where
     prg = case prgs of [prg] -> prg; _  -> error $ "emu, unexpected number of prg"
     readonly :: U8 -> Ref U8
@@ -33,7 +36,7 @@ busCPU Mapper{prgs} a = readonly (PRG.read prg a)
           }
 
 busPPU :: Mapper -> Addr -> Ref U8
-busPPU Mapper{chrs} a = readonly (CHR.read chr a)
+busPPU Mapper{chrs} a = readonly (readRom chr a)
   where
     chr = case chrs of [chr] -> chr; _  -> error "emu, unexpected number of chr"
     readonly :: U8 -> Ref U8
@@ -54,8 +57,8 @@ loadMapper path = do
   let y = fromIntegral (bs !! 5)
   --let ntm = if byteToUnsigned (bs !! 6) `testBit` 0 then NTM_Horizontal else NTM_Vertical
   when (length bs /= headerSize + (x * prgSize) + (y * chrSize)) $ error "bad file size"
-  let prgs = map (\i -> PRG.init $ take prgSize $ drop (headerSize + i * prgSize) bs) [0..x-1]
-  let chrs = map (\i -> CHR.init $ take chrSize $ drop (headerSize + x * prgSize + i * 2 * patSize) bs) [0..y-1]
+  let prgs = map (\i -> initRom $ take prgSize $ drop (headerSize + i * prgSize) bs) [0..x-1]
+  let chrs = map (\i -> initRom $ take chrSize $ drop (headerSize + x * prgSize + i * 2 * patSize) bs) [0..y-1]
   return $ Mapper { header,  prgs, chrs } --,  ntm }
     where
         headerSize = 16
