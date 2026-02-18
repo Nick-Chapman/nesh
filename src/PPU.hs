@@ -451,6 +451,8 @@ data Sprite = Sprite
   , patternTableId :: PatternTableId
   , topTileId :: U8
   , paletteId :: Int
+  , flipX :: Bool
+  , flipY :: Bool
   }
 
 createSprite :: State -> Int -> Eff Sprite
@@ -466,7 +468,10 @@ createSprite State{control,oamRam} id = do
   let patternTableId = if is8x16 then byte1 `testBit` 0 else sprite8x8PatternTableId
   let topTileId = if is8x16 then byte1 .&. 0xfe else byte1
   let paletteId = 4 + fromIntegral (byte2 .&. 0x3)
-  pure Sprite {spriteX,spriteY,is8x16,patternTableId,topTileId,paletteId}
+  let flipX = byte2 `testBit` 6
+  let flipY = byte2 `testBit` 7
+  pure Sprite {spriteX,spriteY,is8x16,patternTableId,topTileId
+              ,paletteId,flipX,flipY}
 
 shouldRenderInScanLine :: Sprite -> CInt -> Bool
 shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
@@ -475,17 +480,24 @@ shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
   diffY >= 0 && diffY < height
 
 renderSprite :: State -> Graphics -> CInt -> Sprite -> Eff ()
-renderSprite s@State{} Graphics{plot} y sprite = do
-  let Sprite{spriteX,spriteY,patternTableId,topTileId,paletteId} = sprite
+renderSprite s@State{control} Graphics{plot} y sprite = do
+  Control{spriteSize=is8x16} <- read control
+  let Sprite{spriteX,spriteY,patternTableId,topTileId
+            ,paletteId,flipX,flipY} = sprite
   let insideY :: CInt = y - fromIntegral spriteY
-  let tileId = topTileId + (if insideY > 7 then 1 else 0)
+
+  let tileId = topTileId + (if cond then 1 else 0)
+        where cond = if flipY && is8x16 then insideY<=7 else insideY>7
+
   let tileInsideY :: CInt = insideY `mod` 8
-  tile <- makeTile s patternTableId (fromIntegral tileId) (fromIntegral tileInsideY)
+  let tileInsideYflipped = if flipY then 7 - tileInsideY else tileInsideY
+  tile <- makeTile s patternTableId (fromIntegral tileId) (fromIntegral tileInsideYflipped)
   paletteColour1 <- getColour s paletteId I1
   paletteColour2 <- getColour s paletteId I2
   paletteColour3 <- getColour s paletteId I3
   forM_ [0..7] $ \(insideX::CInt) -> do
-    let colourIndex = getColourIndex tile (fromIntegral insideX)
+    let insideXflipped = if flipX then 7-insideX else insideX
+    let colourIndex = getColourIndex tile (fromIntegral insideXflipped)
     when (colourIndex /= I0) $ do
       let x :: CInt = fromIntegral spriteX + insideX
       let col = case colourIndex of
