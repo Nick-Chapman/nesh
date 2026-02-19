@@ -107,7 +107,7 @@ initMapper bs = do
               pure (prg ! (off + fromIntegral a - 0x8000))
 
           | a >= 0xC000 && a <= 0xffff ->
-              pure (prg ! (7 * prgSize + fromIntegral a - 0xC000))
+              pure (prg ! ((x-1) * prgSize + fromIntegral a - 0xC000))
 
           | otherwise -> do
               error $ printf "Mapper(busCPU) : address = $%04X" a
