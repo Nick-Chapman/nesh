@@ -17,8 +17,8 @@ import Types (RGB)
 import qualified Data.Text as Text (pack)
 import qualified SDL
 
-main :: Config -> Mapper -> IO ()
-main config mapper = do
+main :: Config -> Eff Mapper -> IO ()
+main config mapperE = do
 
   SDL.initializeAll
 
@@ -83,7 +83,7 @@ main config mapper = do
         if tab then update PPU.nextMode mode else pure ()
 
     let graphics = PPU.Graphics { plot = onPlot, displayFrame }
-    makeSystem config mapper mode graphics
+    makeSystem config mapperE mode graphics
 
   putOut "\n"
   SDL.destroyRenderer renderer

@@ -10,8 +10,9 @@ import PPU qualified (ppu,initState,Mode,Graphics)
 import Text.Printf (printf)
 import qualified PPU (State,registers,oamDMA)
 
-makeSystem  :: Config -> Mapper -> Ref PPU.Mode -> PPU.Graphics -> Eff ()
-makeSystem config mapper mode graphics = do
+makeSystem  :: Config -> Eff Mapper -> Ref PPU.Mode -> PPU.Graphics -> Eff ()
+makeSystem config mapperE mode graphics = do
+  mapper <- mapperE
   extraCpuCycles <- DefineRegister 0
   ppuBus <- makePpuBus mapper
   ppuState <- PPU.initState ppuBus mode extraCpuCycles
@@ -40,7 +41,7 @@ makeCpuBus mapper ppuState = do
         | a == 0x4015 -> pure $ dummyRef_quiet "APU status/control" a
         | a == 0x4016 -> pure $ dummyRef_quiet "controller-port1" a
         | a == 0x4017 -> pure $ dummyRef_quiet "controller-port2" a
-        | a >= 0x8000 && a <= 0xffff -> pure $ Mapper.busCPU mapper a
+        | a >= 0x8000 && a <= 0xffff -> Mapper.busCPU mapper a
         | otherwise -> error $ printf "makeCpuBus: address = $%04X" a
 
   pure cpuBus
@@ -50,16 +51,16 @@ makePpuBus :: Mapper -> Eff Bus
 makePpuBus mapper = do
   vram <- DefineMemory 4096 -- TODO: really only 2K, with mirroring
   paletteRam <- DefineMemory 32
-  pure $ \a -> pure $ do
+  pure $ \a -> do
     if
       | a <= 0x1fff -> Mapper.busPPU mapper a
 
       -- VRAM
-      | a >= 0x2000 && a <= 0x2fff -> vram (fromIntegral a - 0x2000)
+      | a >= 0x2000 && a <= 0x2fff -> pure $ vram (fromIntegral a - 0x2000)
       -- | a >= 0x3000 && a <= 0x3eff -> vram (fromIntegral a - 0x3000) --TODO: mirror
 
       -- palette RAM
-      | a >= 0x3f00 && a <= 0x3f1f -> paletteRam (fromIntegral a - 0x3f00)
+      | a >= 0x3f00 && a <= 0x3f1f -> pure $ paletteRam (fromIntegral a - 0x3f00)
       -- | a >= 0x3f20 && a <= 0x3fff -> paletteRam ((a - 0x3f20) `mod` 0x20) -- TODO: mirrors
 
       | otherwise -> do

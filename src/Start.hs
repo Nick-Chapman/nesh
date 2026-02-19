@@ -3,17 +3,19 @@ module Start (main) where
 import CommandLine (Config(..),parseConfig)
 import Framework (Eff(..),runEffect)
 import Graphics qualified (main)
-import Mapper (loadMapper)
+import Mapper (initMapper)
 import PPU qualified (Graphics(..),initMode)
 import System (makeSystem)
 import System.Environment (getArgs)
 import Text.Printf (printf)
+import qualified Data.ByteString as BS (readFile,unpack)
 
 main :: IO ()
 main = do
   args <- getArgs
-  let config@Config{rom,sdl} = parseConfig args
-  mapper <- loadMapper rom
+  let config@Config{rom=path,sdl} = parseConfig args
+  bytes <- BS.unpack <$> BS.readFile path
+  let mapperE = initMapper bytes
   case sdl of
     False -> do
       let
@@ -23,8 +25,8 @@ main = do
           let _displayFrame n = Log (printf ".%d" n)
           let displayFrame _ = Print "."
           let graphics = PPU.Graphics { plot, displayFrame }
-          makeSystem config mapper mode graphics
+          makeSystem config mapperE mode graphics
 
       runEffect system
     True -> do
-      Graphics.main config mapper
+      Graphics.main config mapperE

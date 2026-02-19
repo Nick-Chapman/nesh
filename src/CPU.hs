@@ -17,24 +17,24 @@ import Types (U8,Addr,HL(..),makeAddr,splitAddr)
 ----------------------------------------------------------------------
 -- interrupts
 
-data Interrupt = RST | NMI | IRQ | IRQ_setB deriving (Eq,Show)
+data Interrupt = RST | NMI | IRQ | IRQ_BRK deriving (Eq,Show)
 
 vector :: Interrupt -> Addr
 vector = \case
   NMI -> 0xfffa
   RST -> 0xfffc
   IRQ -> 0xfffe
-  IRQ_setB -> 0xfffe
+  IRQ_BRK -> 0xfffe
 
 trigger :: State -> Interrupt -> Eff ()
 trigger s@State{bus,ip,flags} interrupt = do
-  --Print $ printf "[%s]" (show interrupt)
+  --Log $ printf "[%s]" (show interrupt)
   --Print $ "n"
   ignore <- if interrupt == IRQ then readFlag s I else pure False
   if ignore then pure () else do
     read ip >>= push16 s
     flags <- read flags
-    push s $ if (interrupt == IRQ_setB) then setBit flags 4 else flags
+    push s $ if (interrupt == IRQ_BRK) then setBit flags 4 else flags
     pcLO <- bus (vector interrupt) >>= read
     pcHI <- bus (vector interrupt + 1) >>= read
     let pc = makeAddr HL { hi = pcHI, lo = pcLO }
@@ -533,9 +533,9 @@ executeInstruction s@State{ip,flags,x,y,a,sp} = \case
   NOP -> Arg0 $
     pure ()
 
-  --BRK -> undefined
+  BRK -> Arg0 $ do update (+1) ip; trigger s IRQ_BRK -- TODO: when hit
 
-  i -> error $ printf "Unimplemented instruction: %s" (show i)
+--  i -> error $ printf "Unimplemented instruction: %s" (show i)
 
 
 lsr :: State -> Ref U8 -> Eff ()
