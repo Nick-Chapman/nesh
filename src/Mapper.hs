@@ -4,7 +4,7 @@ module Mapper
   ) where
 
 import Control.Monad (when)
-import Data.Array (listArray,(!))
+import Data.Array (Array,listArray,(!))
 import Data.Bits ((.&.),(.|.),shiftR) -- testBit
 import Data.ByteString.Internal (w2c)
 import Framework (Ref(..))
@@ -37,29 +37,66 @@ loadMapper path = do
 
   --let ntm = if byteToUnsigned (bs !! 6) `testBit` 0 then NTM_Horizontal else NTM_Vertical
 
-  when (mapperNumber /= 0) $ printf "Unsupport mapper number: %d\n" mapperNumber
-  when (length bs /= headerSize + (x * prgSize) + (y * chrSize)) $ printf "bad file size\n"
+  -- y <- pure $ if (y==0) then 1 else y
 
-  when (y /= 1) $ printf "unexpected number of CHR roms: %d\n" y
+  let actualSize = length bs
+  let expectedSize = headerSize + (x * prgSize) + (y * chrSize)
+
+  when (mapperNumber /= 0) $ printf "Unsupport mapper number: %d\n" mapperNumber
+  when (actualSize /= expectedSize) $ do
+    printf "bad file size: (mapper=%d,x=%d,y=%d) actual=%d, expected=%d, diff=%d\n"
+      mapperNumber x y
+      actualSize expectedSize (actualSize-expectedSize)
 
   let
-    mappedPrgAddress =
-      if
-        | x == 1 -> 0xC000 -- NROM-128
-        | x == 2 -> 0x8000 -- NROM-256
-        | otherwise -> error "unexpected number of PRG roms"
+    makeRom :: Int -> Int -> Array Int (Ref U8)
+    makeRom size starting = listArray (0, size -1)
+      [ Ref { onRead, onWrite }
+      | b <- drop starting bs
+      , let onRead = pure b
+      , let onWrite _ = pure ()
+      ]
 
-  let arr = listArray (0, length bs -1)
-        [ Ref { onRead, onWrite }
-        | b <- bs
-        , let onRead = pure b
-        , let onWrite _ = pure ()
-        ]
+    makeChrRom = makeRom chrSize
+    makePrgRom = makeRom prgSize
 
-  let prgStart = headerSize
-  let chrStart = prgStart + x * prgSize
 
-  let busCPU a = arr ! (fromIntegral a + prgStart - mappedPrgAddress)
-  let busPPU a = arr ! (fromIntegral a + chrStart)
+  case mapperNumber of
+    0 -> do
 
-  pure Mapper { busPPU, busCPU }
+      when (y /= 1) $ error $ printf "mapper0: unexpected number of CHR roms: %d\n" y
+
+      let chr = makeChrRom (headerSize + x * prgSize)
+      let busPPU a = chr ! fromIntegral a
+
+      let
+        (prg1,prg2) =
+          if
+            | x == 1 -> do -- NROM-128
+                let prg = makePrgRom headerSize
+                (prg,prg) -- mirroring
+
+            | x == 2 -> do -- NROM-256
+                let prg1 = makePrgRom headerSize
+                let prg2 = makePrgRom (headerSize + prgSize)
+                (prg1,prg2)
+
+            | otherwise ->
+                error "mapper0: unexpected number of PRG roms"
+
+      let
+        busCPU :: Addr -> Ref U8
+        busCPU a =
+          if
+            | a >= 0x8000 && a <= 0xBfff -> prg1 ! (fromIntegral a - 0x8000)
+            | a >= 0xC000 && a <= 0xffff -> prg2 ! (fromIntegral a - 0xC000)
+            | otherwise -> error $ printf "Mapper: address = $%04X" a
+
+      pure Mapper { busPPU, busCPU }
+
+    2 -> do
+      undefined
+
+
+    _ -> do
+      error $ printf "Unsupport mapper number: %d\n" mapperNumber
