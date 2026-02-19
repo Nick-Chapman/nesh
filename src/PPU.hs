@@ -442,7 +442,10 @@ renderScanLineSprites state graphics y = do
   when (length visible > 8) $ do
     let State {status=Status{spriteOverflow}} = state
     write True spriteOverflow
-  sequence_ [ renderSprite state graphics y sprite | sprite <- take 8 visible ]
+  -- we render the first 8 sprites which are visible on this scan line
+  -- from back to front. so sprites with lower ids are rendered on top of sprites with hight ids
+  let spritesToRender = reverse (take 8 visible)
+  sequence_ [ renderSprite state graphics y sprite | sprite <- spritesToRender ]
 
 data Sprite = Sprite
   { spriteX :: U8
