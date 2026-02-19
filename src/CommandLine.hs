@@ -22,12 +22,12 @@ parseConfig = loop config0
       , trace_cpu = False
       , stop_at = Nothing
       , init_pc = Nothing
-      , sdl = False
+      , sdl = True
       }
     loop :: Config -> [String] -> Config
     loop acc = \case
       [] -> acc
-      "--sdl":rest -> loop acc { sdl = True } rest
+      "--no-sdl":rest -> loop acc { sdl = False } rest
       "--trace-cpu":rest -> loop acc { trace_cpu = True } rest
       "--stop-at":n:rest -> loop acc { stop_at = Just (Prelude.read n) } rest
       "--init-pc":n:rest -> loop acc { init_pc = Just (Prelude.read n) } rest
