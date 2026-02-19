@@ -89,48 +89,25 @@ initMapper bs = do
           | a >= 0x0000 && a <= 0x1fff -> pure $ chr (fromIntegral a)
           | otherwise -> error $ printf "Mapper(busPPU) : address = $%04X" a
 
-      bankSelectRegister <- DefineRegister 0
-
-      let
+      bankSelectOffset <- DefineRegister 0
 
       let
         onWrite v = do
-          when (v > 7) $ error (printf "Mapper2: bank select too-big: %d" v)
-          write v bankSelectRegister
+          when (fromIntegral v > x) $ error (printf "Mapper2: bank select too-big: %d" v)
+          write (fromIntegral v * prgSize) bankSelectOffset
           pure ()
 
-      -- TODO: just make one big rom, determined by x
-      let prg0 = makeRom onWrite prgSize (headerSize)
-      let prg1 = makeRom onWrite prgSize (headerSize + 1 * prgSize)
-      let prg2 = makeRom onWrite prgSize (headerSize + 2 * prgSize)
-      let prg3 = makeRom onWrite prgSize (headerSize + 3 * prgSize)
-      let prg4 = makeRom onWrite prgSize (headerSize + 4 * prgSize)
-      let prg5 = makeRom onWrite prgSize (headerSize + 5 * prgSize)
-      let prg6 = makeRom onWrite prgSize (headerSize + 6 * prgSize)
-      let prg7 = makeRom onWrite prgSize (headerSize + 7 * prgSize)
-
-      let
-        bank :: U8 -> Array Int (Ref U8)
-        bank = \case
-          0 -> prg0
-          1 -> prg1
-          2 -> prg2
-          3 -> prg3
-          4 -> prg4
-          5 -> prg5
-          6 -> prg6
-          7 -> prg7
-          x -> error (show ("bank",x))
+      let prg = makeRom onWrite (prgSize*x) headerSize
 
       let
         busCPU :: Bus
         busCPU a = if
           | a >= 0x8000 && a <= 0xBfff -> do
-              v <- read bankSelectRegister
-              pure (bank v ! (fromIntegral a - 0x8000))
+              off <- read bankSelectOffset
+              pure (prg ! (off + fromIntegral a - 0x8000))
 
           | a >= 0xC000 && a <= 0xffff ->
-              pure (prg7 ! (fromIntegral a - 0xC000))
+              pure (prg ! (7 * prgSize + fromIntegral a - 0xC000))
 
           | otherwise -> do
               error $ printf "Mapper(busCPU) : address = $%04X" a
