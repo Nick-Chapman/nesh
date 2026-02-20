@@ -280,7 +280,7 @@ pageCross a1 a2 = do
 
 hasPageCrossPenalty :: Instruction -> Bool
 hasPageCrossPenalty = \case
-  STA -> False -- TODO: any more?
+  STA -> False -- any others?
   _ -> True
 
 ----------------------------------------------------------------------
@@ -533,10 +533,7 @@ executeInstruction s@State{ip,flags,x,y,a,sp} = \case
   NOP -> Arg0 $
     pure ()
 
-  BRK -> Arg0 $ do update (+1) ip; trigger s IRQ_BRK -- TODO: when hit
-
---  i -> error $ printf "Unimplemented instruction: %s" (show i)
-
+  BRK -> Arg0 $ do update (+1) ip; trigger s IRQ_BRK
 
 lsr :: State -> Ref U8 -> Eff ()
 lsr s r = do
