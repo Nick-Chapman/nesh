@@ -1,13 +1,12 @@
-
 module Graphics (main) where
 
 import CommandLine (Config)
 import Control.Monad (when)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),runEffect,Ref,read,update,write)
+import Framework (Eff(..),runEffect,Ref,write)
 import Mapper (Mapper)
-import PPU qualified (initMode,nextMode,Graphics(..),Mode)
+import PPU qualified (Graphics(..))
 import Prelude hiding (read)
 import SDL (V2(..),V4(..),($=))
 import System (makeSystem)
@@ -54,7 +53,6 @@ main config mapperE = do
 
   runEffect $ do
     tab <- DefineRegister False
-    mode <- DefineRegister PPU.initMode
     let
       onPlot :: CInt -> CInt -> RGB -> Eff ()
       onPlot x0 y0 col = IO $ do
@@ -71,22 +69,21 @@ main config mapperE = do
           when (frame `mod` titleUpdateFrames == 0) $ do
             actualDuration <- IO $ durationSinceLastAsk
             let fpsAchieved = fromIntegral titleUpdateFrames * 1000 / actualDuration
-            mode <- read mode
-            let title = printf "Dishonesty (%s) fps=[%.0g]" (show mode) fpsAchieved
+            let title = printf "Dishonesty fps=[%.0g]" fpsAchieved
             IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
         IO $ SDL.present renderer
         events <- IO $ SDL.pollEvents
-        mapM_ (processEvent tab mode) events
+        mapM_ (processEvent tab) events
 
     let graphics = PPU.Graphics { plot = onPlot, displayFrame }
-    makeSystem config mapperE tab mode graphics
+    makeSystem config mapperE tab graphics
 
   SDL.destroyRenderer renderer
   SDL.destroyWindow win
   SDL.quit
 
-processEvent :: Ref Bool -> Ref PPU.Mode -> SDL.Event -> Eff ()
-processEvent tab _mode e = do
+processEvent :: Ref Bool -> SDL.Event -> Eff ()
+processEvent tab e = do
   case e of
     SDL.Event _t SDL.QuitEvent -> Halt
     SDL.Event _ (SDL.KeyboardEvent ke) -> do
@@ -96,6 +93,5 @@ processEvent tab _mode e = do
         (SDL.KeycodeEscape,SDL.Pressed) -> Halt
         (SDL.KeycodeQ,SDL.Pressed) -> Halt
         (SDL.KeycodeTab,motion) -> write (motion == SDL.Pressed) tab
-        (SDL.KeycodeLShift,SDL.Pressed) -> update PPU.nextMode _mode
         _ -> pure ()
     _ -> pure ()

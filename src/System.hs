@@ -6,16 +6,16 @@ import Control.Monad (when)
 import Framework (Eff(..),Ref,Bus,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busCPU,busPPU)
-import PPU qualified (ppu,initState,Mode,Graphics)
+import PPU qualified (ppu,initState,Graphics)
 import Text.Printf (printf)
 import qualified PPU (State,registers,oamDMA)
 
-makeSystem  :: Config -> Eff Mapper -> Ref Bool -> Ref PPU.Mode -> PPU.Graphics -> Eff ()
-makeSystem config mapperE tab mode graphics = do
+makeSystem  :: Config -> Eff Mapper -> Ref Bool -> PPU.Graphics -> Eff ()
+makeSystem config mapperE tab graphics = do
   mapper <- mapperE
   extraCpuCycles <- DefineRegister 0
   ppuBus <- makePpuBus mapper
-  ppuState <- PPU.initState ppuBus tab mode extraCpuCycles
+  ppuState <- PPU.initState ppuBus tab extraCpuCycles
   cpuBus <- makeCpuBus mapper ppuState
   cpuState <- CPU.mkState extraCpuCycles cpuBus
   let cpu = CPU.cpu config cpuState

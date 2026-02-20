@@ -2,7 +2,6 @@ module PPU
   ( State, initState
   , registers, oamDMA
   , ppu
-  , Mode, initMode, nextMode
   , Graphics(..)
   ) where
 
@@ -20,84 +19,26 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 
 ----------------------------------------------------------------------
+-- ppu
+
+ppu :: Eff () -> State -> Graphics -> Eff ()
+ppu triggerNMI state graphics = loop 0
+  where
+    Graphics{displayFrame} = graphics
+    loop frame = do
+      normalOperation triggerNMI state graphics
+
+      displayFrame frame
+      loop (frame+1)
+
+
+----------------------------------------------------------------------
 -- Graphics
-
-data Mode = Normal | Gradient | ViewTiles
-  deriving (Eq,Enum,Bounded,Show)
-
-initMode :: Mode
-initMode = Normal
-
-nextMode :: Mode -> Mode
-nextMode s = if s == maxBound then minBound else succ s
 
 data Graphics = Graphics
   { plot :: CInt -> CInt -> RGB -> Eff ()
   , displayFrame :: Int -> Eff ()
   }
-
-----------------------------------------------------------------------
--- ppu
-
-ppu :: Eff () -> State -> Graphics -> Eff ()
-ppu triggerNMI state@State{mode} graphics = loop 0
-  where
-    Graphics{displayFrame} = graphics
-    loop frame = do
-      read mode >>= \case
-        Gradient -> do testGradient graphics frame; AdvancePPU (262 * 341)
-        ViewTiles -> do viewTiles state graphics; AdvancePPU (262 * 341)
-        Normal -> normalOperation triggerNMI state graphics
-
-      displayFrame frame
-      loop (frame+1)
-
-----------------------------------------------------------------------
--- shifting gradient test pattern...
-
-testGradient :: Graphics -> Int -> Eff () -- TODO bye
-testGradient Graphics{plot} frame = do
-  forM_ [0..239] $ \y -> do
-    forM_ [0..255] $ \x -> do
-      let col = gradientCol (fromIntegral frame) x y
-      plot x y col
-  where
-    gradientCol :: CInt -> CInt -> CInt -> RGB
-    gradientCol frame x y = do
-      let r = fromIntegral (y + frame)
-      let g = 0
-      let b = fromIntegral (x + frame)
-      V4 r g b 255
-
-----------------------------------------------------------------------
--- view-tiles
-
-viewTiles :: State -> Graphics -> Eff () -- TODO bye
-viewTiles s Graphics{plot} = oneFrame
-  where
-    oneFrame = do
-      let scale = 2
-      let scaledSize = 8 * scale
-      let tilesPerRow = 256 `div` scaledSize
-      forM_ [0..239] $ \tileId -> do
-        let startX = tileId `mod` tilesPerRow * scaledSize
-        let startY = tileId `div` tilesPerRow * scaledSize
-        forM_ [0..7] $ \y -> do
-          tile <- makeTile s False tileId (fromIntegral y)
-          forM_ [0..7] $ \x -> do
-            let paletteId = 0
-            let colourIndex = getColourIndex tile (fromIntegral x)
-            col <-
-              case colourIndex of
-                I0 -> getColour s 0 I0
-                _ -> getColour s paletteId colourIndex
-
-            forM_ [0..scale-1] $ \yy -> do
-              forM_ [0..scale-1] $ \xx -> do
-                plot
-                  (fromIntegral $ startX + x * scale + xx)
-                  (fromIntegral $ startY + y * scale + yy)
-                  col
 
 ----------------------------------------------------------------------
 -- normal operation
@@ -380,12 +321,11 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , oamRam :: Int -> Ref U8
   -- tab key: invert sense of "inFront" when rendering sprite/background. Just for lolz
   , tab :: Ref Bool
-  , mode :: Ref Mode
   , extraCpuCycles :: Ref Int
   }
 
-initState :: Bus -> Ref Bool -> Ref Mode -> Ref Int -> Eff State
-initState bus tab mode extraCpuCycles =  do
+initState :: Bus -> Ref Bool -> Ref Int -> Eff State
+initState bus tab extraCpuCycles =  do
   control <- DefineRegister (byte2control 0)
   status <- initStatus
   latch <- DefineRegister False
@@ -394,7 +334,7 @@ initState bus tab mode extraCpuCycles =  do
   oamOffset <- DefineRegister 0
   oamRam <- DefineMemory 256
   pure State {bus,control,status,latch,addr,buffer,oamOffset,oamRam
-             ,tab,mode
+             ,tab
              ,extraCpuCycles
              } -- TODO recordWildcards
 

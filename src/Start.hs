@@ -4,7 +4,7 @@ import CommandLine (Config(..),parseConfig)
 import Framework (Eff(..),runEffect)
 import Graphics qualified (main)
 import Mapper (initMapper)
-import PPU qualified (Graphics(..),initMode)
+import PPU qualified (Graphics(..))
 import System (makeSystem)
 import System.Environment (getArgs)
 import Text.Printf (printf)
@@ -21,12 +21,11 @@ main = do
       let
         system = do
           tab <- DefineRegister False
-          mode <- DefineRegister PPU.initMode
           let plot _ _ _ = pure () -- ignore plottng
           let _displayFrame n = Log (printf ".%d" n)
           let displayFrame _ = Print "."
           let graphics = PPU.Graphics { plot, displayFrame }
-          makeSystem config mapperE tab mode graphics
+          makeSystem config mapperE tab graphics
 
       runEffect system
     True -> do
