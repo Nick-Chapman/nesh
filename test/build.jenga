@@ -11,5 +11,5 @@ nestest.expected: nestest.golden nestest.size
 nestest.actual: nestest.out nestest.size
   cat $in | head -$$(cat $in2) > $out
 
-nestest.out : ../src/emu.exe nestest.nes
+nestest.out : ../src/nesh.exe nestest.nes
   ./$in $in2 --no-sdl --init-pc 0xC000 --trace-cpu --stop-at 14575 > $out || true

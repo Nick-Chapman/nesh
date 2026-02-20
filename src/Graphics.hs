@@ -35,7 +35,7 @@ main config mapperE = do
   let winConfig = SDL.defaultWindow { SDL.windowInitialSize = windowSize
                                     , SDL.windowPosition = SDL.Absolute (SDL.P (SDL.V2 1000 100))
                                     }
-  win <- SDL.createWindow (Text.pack "Dishonesty") $ winConfig
+  win <- SDL.createWindow (Text.pack "nesh") $ winConfig
   renderer <- SDL.createRenderer win (-1) SDL.defaultRenderer
 
   SDL.rendererDrawColor renderer $= V4 100 100 100 255
@@ -69,7 +69,7 @@ main config mapperE = do
           when (frame `mod` titleUpdateFrames == 0) $ do
             actualDuration <- IO $ durationSinceLastAsk
             let fpsAchieved = fromIntegral titleUpdateFrames * 1000 / actualDuration
-            let title = printf "Dishonesty fps=[%.0g]" fpsAchieved
+            let title = printf "nesh fps=[%.0g]" fpsAchieved
             IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
         IO $ SDL.present renderer
         events <- IO $ SDL.pollEvents

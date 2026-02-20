@@ -1,3 +1,3 @@
-# emu-framework
+# nesh
 
-Emulator framework in Haskell, targeting NES
+NES Emulator in Stateful Haskell.

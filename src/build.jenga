@@ -1,6 +1,6 @@
 
 executable-name:
-  echo emu.exe > $out
+  echo nesh.exe > $out
 
 include ../../jenga/rulelib/haskell.jenga
 
