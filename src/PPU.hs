@@ -217,13 +217,14 @@ ppuCtrl State{control} = Ref {onRead,onWrite}
     onWrite v = write (byte2control v) control
 
 ppuStatus :: State -> Ref U8
-ppuStatus State{status} = Ref {onRead,onWrite}
+ppuStatus State{status,latch} = Ref {onRead,onWrite}
   where
+    Status{isInVBlankInterval} = status
     onRead = do
-      --this.isInVBlankInterval = 0 -- TODO
-      --this.ppu.registers.ppuAddr.latch = false --TODO
       v <- readStatus status
-      --Log $ printf "ppuStatus: read -> %02x" v
+      -- zero two flags after we've read the value
+      write False isInVBlankInterval
+      write False latch
       pure v
     onWrite v = do
       Error $ printf "ppuStatus: write %02x" v
