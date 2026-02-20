@@ -2,6 +2,7 @@ module Graphics (main) where
 
 import CommandLine (Config)
 import Control.Monad (when)
+import Controller (Keys(..),initKeys,seeKeys)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),runEffect,Ref,write)
@@ -52,6 +53,7 @@ main config mapperE = do
       pure $ fromIntegral $ max (t2-t1) 1
 
   runEffect $ do
+    keys <- Controller.initKeys
     tab <- DefineRegister False
     let
       onPlot :: CInt -> CInt -> Colour -> Eff ()
@@ -62,18 +64,22 @@ main config mapperE = do
         let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
         SDL.fillRect renderer (Just rect)
 
+      updateTitleBar frame = do
+        let titleUpdateFrames = 10
+        when (frame `mod` titleUpdateFrames == 0) $ do
+          actualDuration <- IO $ durationSinceLastAsk
+          let fpsAchieved = fromIntegral titleUpdateFrames * 1000 / actualDuration
+          keysState <- Controller.seeKeys keys
+          let title = printf "nesh keys=[%s] fps=[%.0g]" keysState fpsAchieved
+          IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
+
       displayFrame :: CInt -> Eff ()
       displayFrame frame = do
-        let titleUpdateFrames = 10
-        do
-          when (frame `mod` titleUpdateFrames == 0) $ do
-            actualDuration <- IO $ durationSinceLastAsk
-            let fpsAchieved = fromIntegral titleUpdateFrames * 1000 / actualDuration
-            let title = printf "nesh fps=[%.0g]" fpsAchieved
-            IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
         IO $ SDL.present renderer
         events <- IO $ SDL.pollEvents
-        mapM_ (processEvent tab) events
+        mapM_ (processEvent keys tab) events
+        updateTitleBar frame
+        where
 
     let graphics = PPU.Graphics { plot = onPlot, displayFrame }
     makeSystem config mapperE tab graphics
@@ -82,16 +88,34 @@ main config mapperE = do
   SDL.destroyWindow win
   SDL.quit
 
-processEvent :: Ref Bool -> SDL.Event -> Eff ()
-processEvent tab e = do
+processEvent :: Keys -> Ref Bool -> SDL.Event -> Eff ()
+processEvent keys tab e = do
   case e of
     SDL.Event _t SDL.QuitEvent -> Halt
     SDL.Event _ (SDL.KeyboardEvent ke) -> do
       let code = SDL.keysymKeycode (SDL.keyboardEventKeysym ke)
       let motion = SDL.keyboardEventKeyMotion ke
-      case (code,motion) of
-        (SDL.KeycodeEscape,SDL.Pressed) -> Halt
-        (SDL.KeycodeQ,SDL.Pressed) -> Halt
-        (SDL.KeycodeTab,motion) -> write (motion == SDL.Pressed) tab
+      let drives = write (motion == SDL.Pressed)
+      let quit = when (motion==SDL.Pressed) Halt
+      case code of
+        SDL.KeycodeEscape -> quit
+        SDL.KeycodeQ -> quit
+
+        -- Exploration/hacking. Currently invert the sense of "behindBG" for lolz
+        SDL.KeycodeTab -> drives tab
+
+        -- Controller-1 keys
+        SDL.KeycodeReturn -> drives start
+        SDL.KeycodeSpace -> drives select
+        SDL.KeycodeA -> drives buttonA
+        SDL.KeycodeD -> drives buttonB -- Note. This is on 'D'
+        SDL.KeycodeLeft -> drives left
+        SDL.KeycodeRight -> drives right
+        SDL.KeycodeUp -> drives up
+        SDL.KeycodeDown -> drives down
+
         _ -> pure ()
     _ -> pure ()
+
+    where
+      Keys{start,select,buttonA,buttonB,left,right,up,down} = keys
