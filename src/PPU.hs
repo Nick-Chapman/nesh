@@ -8,7 +8,7 @@ module PPU
 
 import Control.Monad (when,forM_)
 import Data.Array (Array,(!),listArray)
-import Data.Bits (testBit,(.&.),(.|.),shiftR)
+import Data.Bits (testBit,(.&.),(.|.),xor,shiftR)
 import Data.Word (Word32)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef_quiet)
@@ -134,7 +134,7 @@ normalOperation triggerNMI s@State{control,status} graphics = timing
 
 
 renderScanLineBG :: State -> Graphics -> Int -> SpritePixMap -> Eff ()
-renderScanLineBG s@State{bus,control} Graphics{plot} y spritePixMap = do
+renderScanLineBG s@State{tab,bus,control} Graphics{plot} y spritePixMap = do
   Control{nameTableId, backgroundPatternTableId} <- read control
   let nameTableLocation :: Addr = 0x2000 + fromIntegral (fromEnum nameTableId * 1024)
   forM_ [0 .. 31] $ \tileX -> do
@@ -151,11 +151,12 @@ renderScanLineBG s@State{bus,control} Graphics{plot} y spritePixMap = do
       let bgIsOpaque = colourIndex /= I0
       bgCol <- case colourIndex of I0 -> getColour s 0 I0
                                    _ -> getColour s paletteId colourIndex
+      tab <- read tab
       let
-        -- TODO: take accoun of BG non apagueness
         resolveddCol =
           case Map.lookup x spritePixMap of
-            Just (col,inFront) -> if inFront || not bgIsOpaque then col else bgCol
+            Just (col,inFront) ->
+              if (tab `xor` inFront) || not bgIsOpaque then col else bgCol
             Nothing -> bgCol
 
       plot x (fromIntegral y) resolveddCol
@@ -377,12 +378,14 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , buffer :: Ref U8
   , oamOffset :: Ref U8
   , oamRam :: Int -> Ref U8
+  -- tab key: invert sense of "inFront" when rendering sprite/background. Just for lolz
+  , tab :: Ref Bool
   , mode :: Ref Mode
   , extraCpuCycles :: Ref Int
   }
 
-initState :: Bus -> Ref Mode -> Ref Int -> Eff State
-initState bus mode extraCpuCycles =  do
+initState :: Bus -> Ref Bool -> Ref Mode -> Ref Int -> Eff State
+initState bus tab mode extraCpuCycles =  do
   control <- DefineRegister (byte2control 0)
   status <- initStatus
   latch <- DefineRegister False
@@ -390,7 +393,8 @@ initState bus mode extraCpuCycles =  do
   buffer <- DefineRegister 0
   oamOffset <- DefineRegister 0
   oamRam <- DefineMemory 256
-  pure State {bus,control,status,latch,addr,buffer,oamOffset,oamRam,mode
+  pure State {bus,control,status,latch,addr,buffer,oamOffset,oamRam
+             ,tab,mode
              ,extraCpuCycles
              } -- TODO recordWildcards
 

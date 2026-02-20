@@ -20,12 +20,13 @@ main = do
     False -> do
       let
         system = do
+          tab <- DefineRegister False
           mode <- DefineRegister PPU.initMode
           let plot _ _ _ = pure () -- ignore plottng
           let _displayFrame n = Log (printf ".%d" n)
           let displayFrame _ = Print "."
           let graphics = PPU.Graphics { plot, displayFrame }
-          makeSystem config mapperE mode graphics
+          makeSystem config mapperE tab mode graphics
 
       runEffect system
     True -> do

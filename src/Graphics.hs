@@ -5,13 +5,12 @@ import CommandLine (Config)
 import Control.Monad (when)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),runEffect,update,read)
+import Framework (Eff(..),runEffect,Ref,read,update,write)
 import Mapper (Mapper)
-import PPU qualified (initMode,nextMode,Graphics(..))
+import PPU qualified (initMode,nextMode,Graphics(..),Mode)
 import Prelude hiding (read)
 import SDL (V2(..),V4(..),($=))
 import System (makeSystem)
-import System.IO (hFlush,stdout,hPutStr)
 import Text.Printf (printf)
 import Types (RGB)
 import qualified Data.Text as Text (pack)
@@ -54,6 +53,7 @@ main config mapperE = do
       pure $ fromIntegral $ max (t2-t1) 1
 
   runEffect $ do
+    tab <- DefineRegister False
     mode <- DefineRegister PPU.initMode
     let
       onPlot :: CInt -> CInt -> RGB -> Eff ()
@@ -66,7 +66,6 @@ main config mapperE = do
 
       displayFrame :: Int -> Eff ()
       displayFrame frame = do
-        --Print $ ","
         let titleUpdateFrames = 10
         do
           when (frame `mod` titleUpdateFrames == 0) $ do
@@ -77,42 +76,26 @@ main config mapperE = do
             IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
         IO $ SDL.present renderer
         events <- IO $ SDL.pollEvents
-        let quit = any isQuitEvent events
-        let tab = any isTabEvent events
-        if quit then Halt else pure ()
-        if tab then update PPU.nextMode mode else pure ()
+        mapM_ (processEvent tab mode) events
 
     let graphics = PPU.Graphics { plot = onPlot, displayFrame }
-    makeSystem config mapperE mode graphics
+    makeSystem config mapperE tab mode graphics
 
-  putOut "\n"
   SDL.destroyRenderer renderer
   SDL.destroyWindow win
   SDL.quit
 
-putOut :: String -> IO ()
-putOut s = do
-  hPutStr stdout s
-  hFlush stdout
-
-isQuitEvent :: SDL.Event -> Bool
-isQuitEvent = \case
-  SDL.Event _t SDL.QuitEvent -> True
-  SDL.Event _ (SDL.KeyboardEvent ke) -> do
-    let code = SDL.keysymKeycode (SDL.keyboardEventKeysym ke)
-    let motion = SDL.keyboardEventKeyMotion ke
-    case (code,motion) of
-      (SDL.KeycodeEscape,SDL.Pressed) -> True
-      (SDL.KeycodeQ,SDL.Pressed) -> True
-      _ -> False
-  _ -> False
-
-isTabEvent :: SDL.Event -> Bool
-isTabEvent = \case
-  SDL.Event _ (SDL.KeyboardEvent ke) -> do
-    let code = SDL.keysymKeycode (SDL.keyboardEventKeysym ke)
-    let motion = SDL.keyboardEventKeyMotion ke
-    case (code,motion) of
-      (SDL.KeycodeTab,SDL.Pressed) -> True
-      _ -> False
-  _ -> False
+processEvent :: Ref Bool -> Ref PPU.Mode -> SDL.Event -> Eff ()
+processEvent tab _mode e = do
+  case e of
+    SDL.Event _t SDL.QuitEvent -> Halt
+    SDL.Event _ (SDL.KeyboardEvent ke) -> do
+      let code = SDL.keysymKeycode (SDL.keyboardEventKeysym ke)
+      let motion = SDL.keyboardEventKeyMotion ke
+      case (code,motion) of
+        (SDL.KeycodeEscape,SDL.Pressed) -> Halt
+        (SDL.KeycodeQ,SDL.Pressed) -> Halt
+        (SDL.KeycodeTab,motion) -> write (motion == SDL.Pressed) tab
+        (SDL.KeycodeLShift,SDL.Pressed) -> update PPU.nextMode _mode
+        _ -> pure ()
+    _ -> pure ()
