@@ -6,10 +6,10 @@ nestest.size: nestest.out
   echo $$(cat $< | wc -l) > $out
 
 nestest.expected: nestest.golden nestest.size
-  cat $in | head -$$(cat nestest.size) > $out
+  cat $in1 | head -$$(cat $in2) > $out
 
-nestest.actual: nestest.out nestest.size # TODO jenga $in1 $in2
-  cat nestest.out | head -$$(cat nestest.size) > $out
+nestest.actual: nestest.out nestest.size
+  cat $in | head -$$(cat $in2) > $out
 
 nestest.out : ../src/emu.exe nestest.nes
-  ./$in nestest.nes --no-sdl --init-pc 0xC000 --trace-cpu --stop-at 14575 > $out || true
+  ./$in $in2 --no-sdl --init-pc 0xC000 --trace-cpu --stop-at 14575 > $out || true
