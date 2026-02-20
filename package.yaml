@@ -25,6 +25,7 @@ default-extensions:
 - MultiWayIf
 - NamedFieldPuns
 - NumericUnderscores
+- RecordWildCards
 - ScopedTypeVariables
 - Strict
 

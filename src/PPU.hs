@@ -310,7 +310,7 @@ oamDMA State{oamRam,extraCpuCycles} cpuBus = Ref {onRead,onWrite}
 ----------------------------------------------------------------------
 -- PPU State
 
-data State = State -- TODO: rename Context? (because value never changes!)
+data State = State
   { bus :: Bus
   , control :: Ref Control
   , status :: Status
@@ -333,10 +333,7 @@ initState bus tab extraCpuCycles =  do
   buffer <- DefineRegister 0
   oamOffset <- DefineRegister 0
   oamRam <- DefineMemory 256
-  pure State {bus,control,status,latch,addr,buffer,oamOffset,oamRam
-             ,tab
-             ,extraCpuCycles
-             } -- TODO recordWildcards
+  pure State {..}
 
 ----------------------------------------------------------------------
 -- ControlByte
