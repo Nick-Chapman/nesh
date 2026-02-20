@@ -19,53 +19,53 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 
 ----------------------------------------------------------------------
+-- types
+
+-- abstract
+type TileId = U8
+type MasterColourIndex = U6
+type SpriteId = U6
+type PaletteId = U5
+type ColourIndex = U2
+type NameTableId = U2
+type PatternTableId = Bool
+
+-- representation
+type U6 = U8
+type U5 = CInt
+type U3 = CInt
+type U2 = CInt
+
+----------------------------------------------------------------------
 -- ppu
-
-ppu :: Eff () -> State -> Graphics -> Eff ()
-ppu triggerNMI state graphics = loop 0
-  where
-    Graphics{displayFrame} = graphics
-    loop frame = do
-      normalOperation triggerNMI state graphics
-
-      displayFrame frame
-      loop (frame+1)
-
-
-----------------------------------------------------------------------
--- Graphics
-
-data Graphics = Graphics
-  { plot :: CInt -> CInt -> Colour -> Eff ()
-  , displayFrame :: Int -> Eff ()
-  }
-
-----------------------------------------------------------------------
--- normal operation
 
 -- In total, we have 262 (1+240+21) lines y:[-1..260]
 --   One pre-visible line, y:-1
 --   240 visible lines, y:[0..239]
 --   21 post-visible lines, y:[240..260]
 
-normalOperation :: Eff () -> State -> Graphics -> Eff ()
-normalOperation triggerNMI s@State{control,status} graphics = timing
+ppu :: Eff () -> State -> Graphics -> Eff ()
+ppu triggerNMI s graphics = loop 0
   where
-    timing = do
-      forM_ [(-1)..261] $ \(y::Int) -> do -- TODO: CInt
+    State{control,status} = s
+    Status{isInVBlankInterval,spriteOverflow} = status
+    Graphics{displayFrame} = graphics
+
+    loop frame = do
+      forM_ [(-1)..261] $ \y -> do
         when (y == -1) preVisibleLine
         when (y >= 0 && y <= 239) $ visibleLine y
         when (y == 241) vblankLine
         AdvancePPU 341
-
-    Status{isInVBlankInterval,spriteOverflow} = status
+      displayFrame frame
+      loop (frame+1)
 
     preVisibleLine = do
       write False isInVBlankInterval
       write False spriteOverflow
 
     visibleLine y = do
-      spritePixMap <- renderScanLineSprites s (fromIntegral y)
+      spritePixMap <- renderScanLineSprites s y
       renderScanLineBG s graphics y spritePixMap
 
     vblankLine = do
@@ -73,24 +73,31 @@ normalOperation triggerNMI s@State{control,status} graphics = timing
       Control{generateNMIOnVBlank=gen} <- read control
       when gen $ triggerNMI
 
+----------------------------------------------------------------------
+-- Graphics
 
-renderScanLineBG :: State -> Graphics -> Int -> SpritePixMap -> Eff ()
+data Graphics = Graphics
+  { plot :: CInt -> CInt -> Colour -> Eff ()
+  , displayFrame :: CInt -> Eff ()
+  }
+
+renderScanLineBG :: State -> Graphics -> CInt -> SpritePixMap -> Eff ()
 renderScanLineBG s@State{tab,bus,control} Graphics{plot} y spritePixMap = do
   Control{nameTableId, backgroundPatternTableId} <- read control
-  let nameTableLocation :: Addr = 0x2000 + fromIntegral (fromEnum nameTableId * 1024)
+  let nameTableLocation :: Addr = 0x2000 + fromIntegral (nameTableId * 1024)
   forM_ [0 .. 31] $ \tileX -> do
     let xa = tileX * 8
     let tileY = y `div` 8
-    let tileIndex = tileY * 32 + tileX
-    tileId <- bus (nameTableLocation + fromIntegral tileIndex) >>= read
+    let tileIndex = fromIntegral (tileY * 32 + tileX)
+    tileId :: TileId <- bus (nameTableLocation + tileIndex) >>= read
     let tileInsideY = y `mod` 8
-    tile <- makeTile s backgroundPatternTableId (fromIntegral tileId) (fromIntegral tileInsideY)
+    tile <- makeTile s backgroundPatternTableId tileId tileInsideY
     paletteId <- getBackgroundPaletteId s nameTableId xa y
-    forM_ [0::Int ..7] $ \xb -> do
-      let x = fromIntegral (xa+xb)
-      let colourIndex = getColourIndex tile (fromIntegral xb)
-      let bgIsOpaque = colourIndex /= I0
-      bgCol <- case colourIndex of I0 -> getColour s 0 I0
+    forM_ [0::U3 ..7] $ \xb -> do
+      let x = xa + xb
+      let colourIndex = getColourIndex tile xb
+      let bgIsOpaque = colourIndex /= 0
+      bgCol <- case colourIndex of 0 -> getColour s 0 0
                                    _ -> getColour s paletteId colourIndex
       tab <- read tab
       let
@@ -100,45 +107,116 @@ renderScanLineBG s@State{tab,bus,control} Graphics{plot} y spritePixMap = do
             Just (col,behindBG) -> do
               if (tab `xor` behindBG) && bgIsOpaque then bgCol else col
 
-      plot x (fromIntegral y) resolveddCol
+      plot x y resolveddCol
 
-getColourIndex :: Tile -> U8 -> ColourIndex
-getColourIndex TileX{loRow,hiRow} x = do
-  let i = 7 - fromIntegral x
-  let lo = loRow `testBit` i
-  let hi = hiRow `testBit` i
-  case (hi,lo) of
-    (False,False) -> I0
-    (False,True) -> I1
-    (True,False) -> I2
-    (True,True) -> I3
-
-getBackgroundPaletteId :: State -> U2 -> Int -> Int -> Eff PaletteId
+getBackgroundPaletteId :: State -> NameTableId -> CInt -> CInt -> Eff PaletteId
 getBackgroundPaletteId State{bus} nameTableId x y = do
   let xx = x `div` 32
   let yy = y `div` 32
-  let nameTableLocation = 0x2000 + (fromIntegral.fromEnum) nameTableId * 1024
+  let nameTableLocation = 0x2000 + fromIntegral (nameTableId * 1024)
   let atableStart = nameTableLocation + 960
-  let atableAddr :: Addr = atableStart + fromIntegral xx + fromIntegral yy * 8
+  let atableAddr :: Addr = atableStart + fromIntegral (xx + yy * 8)
   atableByte <- bus atableAddr >>= read
-  let right :: Bool = (x `div` 16) `testBit` 0
+  let right = (x `div` 16) `testBit` 0
   let bottom = (y `div` 16) `testBit` 0
   let shift = (if bottom then 4 else 0) + (if right then 2 else 0)
-  let twoBits = (atableByte `shiftR` shift) .&. 0x3
-  pure $ toEnum (fromIntegral twoBits)
+  let twoBits = fromIntegral (atableByte `shiftR` shift) .&. 0x3
+  pure twoBits
+
+----------------------------------------------------------------------
+-- Sprites
+
+type SpritePixMap = Map CInt (Colour,Bool)
+
+renderScanLineSprites :: State -> CInt -> Eff SpritePixMap
+renderScanLineSprites state y = do
+  all <- sequence [ createSprite state id | id::SpriteId <- [0..63] ]
+  let visible = [ sprite | sprite <- all, shouldRenderInScanLine sprite y ]
+  when (length visible > 8) $ do
+    let State {status=Status{spriteOverflow}} = state
+    write True spriteOverflow
+  -- we render the first 8 sprites which are visible on this scan line
+  -- from back to front. so sprites with lower ids are rendered on top of sprites with hight ids
+  let spritesToRender = reverse (take 8 visible)
+  -- Map.fromList keeps the last value when there are duplicate keys
+  Map.fromList . concat <$> sequence [ renderSprite state y sprite | sprite <- spritesToRender ]
+
+data Sprite = Sprite
+  { spriteX :: CInt
+  , spriteY :: CInt
+  , is8x16 :: Bool
+  , patternTableId :: PatternTableId
+  , topTileId :: TileId
+  , paletteId :: PaletteId
+  , behindBG :: Bool
+  , flipX :: Bool
+  , flipY :: Bool
+  }
+
+createSprite :: State -> SpriteId -> Eff Sprite
+createSprite State{control,oamRam} id = do
+  Control{sprite8x8PatternTableId,spriteSize=is8x16} <- read control
+  let baseAddress :: U8 = 4 * id
+  byte0 <- read (oamRam baseAddress)
+  byte1 <- read (oamRam (baseAddress + 1))
+  byte2 <- read (oamRam (baseAddress + 2))
+  byte3 <- read (oamRam (baseAddress + 3))
+  let spriteX = fromIntegral byte3
+  let spriteY = fromIntegral byte0 + 1
+  let patternTableId = if is8x16 then byte1 `testBit` 0 else sprite8x8PatternTableId
+  let topTileId = if is8x16 then byte1 .&. 0xfe else byte1
+  let paletteId :: PaletteId = 4 + fromIntegral (byte2 .&. 0x3)
+  let behindBG = byte2 `testBit` 5
+  let flipX = byte2 `testBit` 6
+  let flipY = byte2 `testBit` 7
+  pure Sprite {spriteX,spriteY,is8x16,patternTableId,topTileId
+              ,paletteId,behindBG,flipX,flipY}
+
+shouldRenderInScanLine :: Sprite -> CInt -> Bool
+shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
+  let diffY = y - spriteY
+  let height = if is8x16 then 16 else 8
+  diffY >= 0 && diffY < height
+
+renderSprite :: State -> CInt -> Sprite -> Eff [(CInt,(Colour,Bool))]
+renderSprite s@State{control} y sprite = do
+  Control{spriteSize=is8x16} <- read control
+  let Sprite{spriteX,spriteY,patternTableId,topTileId
+            ,paletteId,behindBG,flipX,flipY} = sprite
+  let insideY = y - spriteY
+  let tileId = topTileId + (if cond then 1 else 0)
+        where cond = if flipY && is8x16 then insideY<=7 else insideY>7
+
+  let tileInsideY = insideY `mod` 8
+  let tileInsideYflipped = if flipY then 7 - tileInsideY else tileInsideY
+  tile <- makeTile s patternTableId tileId tileInsideYflipped
+  paletteColour1 <- getColour s paletteId 1
+  paletteColour2 <- getColour s paletteId 2
+  paletteColour3 <- getColour s paletteId 3
+
+  pure
+    [ (x,(col,behindBG))
+    | (insideX::U3) <- [0..7]
+    , let insideXflipped = if flipX then 7-insideX else insideX
+    , let colourIndex = getColourIndex tile insideXflipped
+    , (colourIndex /= 0)
+    , let x = spriteX + insideX
+    , let col = case colourIndex of
+                       1 -> paletteColour1
+                       2 -> paletteColour2
+                       3 -> paletteColour3
+                       _ -> undefined
+    ]
 
 ----------------------------------------------------------------------
 -- tile
-
-type PatternTableId = Bool
-type TileId = Int -- TODO U8
 
 data Tile = TileX
   { loRow :: U8
   , hiRow :: U8
   }
 
-makeTile :: State -> PatternTableId -> TileId -> U8 -> Eff Tile
+makeTile :: State -> PatternTableId -> TileId -> CInt -> Eff Tile
 makeTile State{bus} patternTableId tileId y = do
   let tableAddr = if patternTableId then 0x1000 else 0x0000
   let loPlaneAddr = tableAddr + fromIntegral tileId * 16
@@ -150,25 +228,26 @@ makeTile State{bus} patternTableId tileId y = do
 ----------------------------------------------------------------------
 -- Colour
 
+getColourIndex :: Tile -> U3 -> ColourIndex
+getColourIndex TileX{loRow,hiRow} x = do
+  let i = fromIntegral (7 - x)
+  let lo = loRow `testBit` i
+  let hi = hiRow `testBit` i
+  (if hi then 2 else 0) + (if lo then 1 else 0)
+
 getColour :: State -> PaletteId -> ColourIndex -> Eff Colour
 getColour State{bus} paletteId colourIndex = do
-  let a = 0x3f00 + fromIntegral paletteId * 4 + fromIntegral (fromEnum colourIndex)
+  let offset = fromIntegral (paletteId * 4 + colourIndex)
+  let a :: Addr = 0x3f00 + offset
   v <- bus a >>= read
   pure $ masterPalette (v `mod` 64)
-
-type PaletteId = Int -- 0..31 ?
-
-type ColourIndex = U2
-
-data U2 = I0 | I1 | I2 | I3 -- TODO: Is this helpful?
-  deriving (Eq,Enum)
 
 ----------------------------------------------------------------------
 -- masterPalette
 
-masterPalette :: U8 -> Colour
+masterPalette :: MasterColourIndex -> Colour
 masterPalette v = do
-  arr ! fromIntegral v -- TODO: minimize need for fromIntegral
+  arr ! v
   where
     arr :: Array U8 Colour
     arr = listArray (0,63) [ mkCol w | w <- colours ]
@@ -289,10 +368,10 @@ oamData State{oamOffset,oamRam} = Ref {onRead,onWrite}
   where
     onRead = do
       off <- read oamOffset
-      read (oamRam (fromIntegral off))
+      read (oamRam off)
     onWrite v = do
       off <- read oamOffset
-      write v (oamRam (fromIntegral off))
+      write v (oamRam off)
       write (off+1) oamOffset
 
 oamDMA :: State -> Bus -> Ref U8
@@ -303,7 +382,7 @@ oamDMA State{oamRam,extraCpuCycles} cpuBus = Ref {onRead,onWrite}
       forM_ [0..255] $ \lo -> do
         let a = makeAddr HL {hi,lo}
         v <- cpuBus a >>= read
-        write v (oamRam (fromIntegral lo))
+        write v (oamRam lo)
       update (+513) extraCpuCycles
       pure ()
 
@@ -318,7 +397,7 @@ data State = State
   , addr :: Ref Addr
   , buffer :: Ref U8
   , oamOffset :: Ref U8
-  , oamRam :: Int -> Ref U8
+  , oamRam :: U8 -> Ref U8
   -- tab key: invert sense of "behindBG" when rendering sprite/background. Just for lolz
   , tab :: Ref Bool
   , extraCpuCycles :: Ref Int
@@ -332,14 +411,15 @@ initState bus tab extraCpuCycles =  do
   addr <- DefineRegister 0
   buffer <- DefineRegister 0
   oamOffset <- DefineRegister 0
-  oamRam <- DefineMemory 256
+  oamRamI <- DefineMemory 256
+  let oamRam = oamRamI . fromIntegral
   pure State {..}
 
 ----------------------------------------------------------------------
 -- ControlByte
 
 data Control = Control
-  { nameTableId :: U2
+  { nameTableId :: NameTableId
   , vramAddressIncrement32 :: Bool
   , sprite8x8PatternTableId  :: Bool
   , backgroundPatternTableId  :: Bool
@@ -349,7 +429,7 @@ data Control = Control
 
 byte2control :: U8 -> Control
 byte2control v = Control
-  { nameTableId = toEnum (fromIntegral (v .&. 0x3))
+  { nameTableId = fromIntegral (v .&. 0x3)
   , vramAddressIncrement32 = v `testBit` 2
   , sprite8x8PatternTableId = v `testBit` 3
   , backgroundPatternTableId = v `testBit` 4
@@ -383,89 +463,3 @@ readStatus Status{spriteOverflow,sprite0Hit,isInVBlankInterval} = do
     (if spriteOverflow then 0x20 else 0) .|.
     (if sprite0Hit then 0x40 else 0) .|.
     (if isInVBlankInterval then 0x80 else 0)
-
-----------------------------------------------------------------------
--- Sprites
-
-type SpritePixMap = Map CInt (Colour,Bool)
-
-renderScanLineSprites :: State -> CInt -> Eff SpritePixMap
-renderScanLineSprites state y = do
-  all <- sequence [ createSprite state id | id::Int <- [0..63] ]
-  let visible = [ sprite | sprite <- all, shouldRenderInScanLine sprite y ]
-  when (length visible > 8) $ do
-    let State {status=Status{spriteOverflow}} = state
-    write True spriteOverflow
-  -- we render the first 8 sprites which are visible on this scan line
-  -- from back to front. so sprites with lower ids are rendered on top of sprites with hight ids
-  let spritesToRender = reverse (take 8 visible)
-  -- Map.fromList keeps the last value when there are duplicate keys
-  Map.fromList . concat <$> sequence [ renderSprite state y sprite | sprite <- spritesToRender ]
-
-data Sprite = Sprite
-  { spriteX :: U8
-  , spriteY :: U8
-  , is8x16 :: Bool
-  , patternTableId :: PatternTableId
-  , topTileId :: U8
-  , paletteId :: Int
-  , behindBG :: Bool
-  , flipX :: Bool
-  , flipY :: Bool
-  }
-
-createSprite :: State -> Int -> Eff Sprite
-createSprite State{control,oamRam} id = do
-  Control{sprite8x8PatternTableId,spriteSize=is8x16} <- read control
-  let baseAddress = 4 * id
-  byte0 <- read (oamRam baseAddress)
-  byte1 <- read (oamRam (baseAddress + 1))
-  byte2 <- read (oamRam (baseAddress + 2))
-  byte3 <- read (oamRam (baseAddress + 3))
-  let spriteX = byte3
-  let spriteY = byte0 + 1
-  let patternTableId = if is8x16 then byte1 `testBit` 0 else sprite8x8PatternTableId
-  let topTileId = if is8x16 then byte1 .&. 0xfe else byte1
-  let paletteId = 4 + fromIntegral (byte2 .&. 0x3)
-  let behindBG = byte2 `testBit` 5
-  let flipX = byte2 `testBit` 6
-  let flipY = byte2 `testBit` 7
-  pure Sprite {spriteX,spriteY,is8x16,patternTableId,topTileId
-              ,paletteId,behindBG,flipX,flipY}
-
-shouldRenderInScanLine :: Sprite -> CInt -> Bool
-shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
-  let diffY = y - fromIntegral spriteY
-  let height = if is8x16 then 16 else 8
-  diffY >= 0 && diffY < height
-
-renderSprite :: State -> CInt -> Sprite -> Eff [(CInt,(Colour,Bool))]
-renderSprite s@State{control} y sprite = do
-  Control{spriteSize=is8x16} <- read control
-  let Sprite{spriteX,spriteY,patternTableId,topTileId
-            ,paletteId,behindBG,flipX,flipY} = sprite
-  let insideY :: CInt = y - fromIntegral spriteY
-
-  let tileId = topTileId + (if cond then 1 else 0)
-        where cond = if flipY && is8x16 then insideY<=7 else insideY>7
-
-  let tileInsideY :: CInt = insideY `mod` 8
-  let tileInsideYflipped = if flipY then 7 - tileInsideY else tileInsideY
-  tile <- makeTile s patternTableId (fromIntegral tileId) (fromIntegral tileInsideYflipped)
-  paletteColour1 <- getColour s paletteId I1
-  paletteColour2 <- getColour s paletteId I2
-  paletteColour3 <- getColour s paletteId I3
-
-  pure
-    [ (x,(col,behindBG))
-    | (insideX::CInt) <- [0..7]
-    , let insideXflipped = if flipX then 7-insideX else insideX
-    , let colourIndex = getColourIndex tile (fromIntegral insideXflipped)
-    , (colourIndex /= I0)
-    , let x :: CInt = fromIntegral spriteX + insideX
-    , let col = case colourIndex of
-                       I0 -> error "sprite/colourIndex/0"
-                       I1 -> paletteColour1
-                       I2 -> paletteColour2
-                       I3 -> paletteColour3
-    ]

@@ -62,7 +62,7 @@ main config mapperE = do
         let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
         SDL.fillRect renderer (Just rect)
 
-      displayFrame :: Int -> Eff ()
+      displayFrame :: CInt -> Eff ()
       displayFrame frame = do
         let titleUpdateFrames = 10
         do
