@@ -96,9 +96,9 @@ renderScanLineBG s@State{tab,bus,control} Graphics{plot} y spritePixMap = do
       let
         resolveddCol =
           case Map.lookup x spritePixMap of
-            Just (col,inFront) ->
-              if (tab `xor` inFront) || not bgIsOpaque then col else bgCol
             Nothing -> bgCol
+            Just (col,behindBG) -> do
+              if (tab `xor` behindBG) && bgIsOpaque then bgCol else col
 
       plot x (fromIntegral y) resolveddCol
 
@@ -318,7 +318,7 @@ data State = State -- TODO: rename Context? (because value never changes!)
   , buffer :: Ref U8
   , oamOffset :: Ref U8
   , oamRam :: Int -> Ref U8
-  -- tab key: invert sense of "inFront" when rendering sprite/background. Just for lolz
+  -- tab key: invert sense of "behindBG" when rendering sprite/background. Just for lolz
   , tab :: Ref Bool
   , extraCpuCycles :: Ref Int
   }
@@ -458,9 +458,8 @@ renderSprite s@State{control} y sprite = do
   paletteColour2 <- getColour s paletteId I2
   paletteColour3 <- getColour s paletteId I3
 
-  let inFront = not behindBG -- TODO: reverse sense
   pure
-    [ (x,(col,inFront))
+    [ (x,(col,behindBG))
     | (insideX::CInt) <- [0..7]
     , let insideXflipped = if flipX then 7-insideX else insideX
     , let colourIndex = getColourIndex tile (fromIntegral insideXflipped)
