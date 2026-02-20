@@ -33,8 +33,9 @@ makeCpuBus mapper ppuState = do
       --when (a == 0xfffc) $ Log "Reading from Reset interrupt vector"
       when (a == 0xfffe) $ Log "Reading from IRQ/BRK interrupt vector"
       if
-        -- TODO: mirrors
         | a <= 0x07ff -> pure $ wram (fromIntegral a)
+        | a >= 0x0800 && a <= 0x0fff -> pure $ wram (fromIntegral a - 0x800)
+        -- TODO: more mirrors
         | a >= 0x2000 && a <= 0x2007 -> PPU.registers ppuState a
         | a >= 0x4000 && a <= 0x4013 -> pure $ dummyRef_quiet "APU register" a
         | a == 0x4014 -> pure $ PPU.oamDMA ppuState cpuBus
@@ -42,7 +43,7 @@ makeCpuBus mapper ppuState = do
         | a == 0x4016 -> pure $ dummyRef_quiet "controller-port1" a
         | a == 0x4017 -> pure $ dummyRef_quiet "controller-port2" a
         | a >= 0x8000 && a <= 0xffff -> Mapper.busCPU mapper a
-        | otherwise -> error $ printf "makeCpuBus: address = $%04X" a
+        | otherwise -> error $ printf "CpuBus: unknown address = $%04X" a
 
   pure cpuBus
 
