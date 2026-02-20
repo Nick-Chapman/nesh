@@ -11,7 +11,7 @@ import Prelude hiding (read)
 import SDL (V2(..),V4(..),($=))
 import System (makeSystem)
 import Text.Printf (printf)
-import Types (RGB)
+import Types (Colour)
 import qualified Data.Text as Text (pack)
 import qualified SDL
 
@@ -54,7 +54,7 @@ main config mapperE = do
   runEffect $ do
     tab <- DefineRegister False
     let
-      onPlot :: CInt -> CInt -> RGB -> Eff ()
+      onPlot :: CInt -> CInt -> Colour -> Eff ()
       onPlot x0 y0 col = IO $ do
         let x = scale (x0 + border)
         let y = scale (y0 + border)

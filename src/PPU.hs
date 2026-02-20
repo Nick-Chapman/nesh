@@ -14,7 +14,7 @@ import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef_quiet)
 import Prelude hiding (read)
 import SDL (V4(..))
 import Text.Printf (printf)
-import Types (Addr,U8,RGB,HL(..),makeAddr,splitAddr)
+import Types (Addr,U8,Colour,HL(..),makeAddr,splitAddr)
 import Data.Map (Map)
 import Data.Map qualified as Map
 
@@ -36,7 +36,7 @@ ppu triggerNMI state graphics = loop 0
 -- Graphics
 
 data Graphics = Graphics
-  { plot :: CInt -> CInt -> RGB -> Eff ()
+  { plot :: CInt -> CInt -> Colour -> Eff ()
   , displayFrame :: Int -> Eff ()
   }
 
@@ -159,7 +159,6 @@ getColour State{bus} paletteId colourIndex = do
 type PaletteId = Int -- 0..31 ?
 
 type ColourIndex = U2
-type Colour = RGB
 
 data U2 = I0 | I1 | I2 | I3 -- TODO: Is this helpful?
   deriving (Eq,Enum)

@@ -3,7 +3,7 @@ module Types
   ( U8
   , HL(..)
   , Addr, makeAddr, splitAddr
-  , RGB
+  , Colour
   ) where
 
 import Data.Word (Word8,Word16)
@@ -24,4 +24,4 @@ splitAddr :: Addr -> HL U8
 splitAddr addr = do
   HL { hi = fromIntegral (addr `shiftR` 8), lo = fromIntegral (addr .&. 0xff) }
 
-type RGB = V4 U8 -- TODO rename Colour
+type Colour = V4 U8
