@@ -54,13 +54,21 @@ makePpuBus :: Mapper -> Eff Bus
 makePpuBus mapper = do
   vram <- DefineMemory 4096 -- TODO: really only 2K, with mirroring
   paletteRam <- DefineMemory 32
-  pure $ \a -> do
-    if
+
+  let
+    ppuBus :: Bus
+    ppuBus a = if
       | a <= 0x1fff -> Mapper.busPPU mapper a
 
       -- VRAM
       | a >= 0x2000 && a <= 0x2fff -> pure $ vram (fromIntegral a - 0x2000)
       -- | a >= 0x3000 && a <= 0x3eff -> vram (fromIntegral a - 0x3000) --TODO: mirror
+
+      -- palette RAM (weird mirrors)
+      | a == 0x3f10 -> ppuBus 0x3f00
+      | a == 0x3f14 -> ppuBus 0x3f04
+      | a == 0x3f18 -> ppuBus 0x3f08
+      | a == 0x3f1c -> ppuBus 0x3f0c
 
       -- palette RAM
       | a >= 0x3f00 && a <= 0x3f1f -> pure $ paletteRam (fromIntegral a - 0x3f00)
@@ -68,3 +76,5 @@ makePpuBus mapper = do
 
       | otherwise -> do
           error $ printf "PpuBus: unknown address = $%04X" a
+
+  pure ppuBus
