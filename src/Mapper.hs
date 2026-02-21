@@ -54,9 +54,17 @@ initMapper bs = do
 
   case mapperNumber of
     0 -> do
-      when (y /= 1) $ error $ printf "mapper0: unexpected number of CHR roms: %d\n" y
-      let chr = makeRom (noWrite "mapper0/chr") chrSize (headerSize + x * prgSize)
-      let busPPU :: Bus = \a -> pure $ do chr ! fromIntegral a
+
+      busPPU :: Bus <- case y of
+        0 -> do
+          chr <- DefineMemory chrSize
+          pure $ \a -> pure $ do chr (fromIntegral a)
+        1 -> do
+          let chr = makeRom (noWrite "mapper0/chr") chrSize (headerSize + x * prgSize)
+          pure $ \a -> pure $ do chr ! fromIntegral a
+        _ ->
+          error $ printf "mapper0: unexpected number of CHR roms: %d\n" y
+
       let
         (prg1,prg2) = if
           | x == 1 -> do -- NROM-128
