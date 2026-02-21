@@ -1,39 +1,66 @@
 module Controller
-  ( initKeys, Keys(..), seeKeys
+  ( Keys(..), makeKeys, seeKeys, State, initState, makeRegister
   ) where
 
+import Control.Monad (when)
+import Data.Bits (testBit)
+import Framework (Eff(..),Ref(..),read,write)
 import Prelude hiding (read)
-import Framework (Eff(..),Ref,read)
+import Types (U8)
 
 data Keys = Keys
-  { start :: Ref Bool -- Enter
-  , select :: Ref Bool -- Space
-  , buttonA :: Ref Bool
+  { buttonA :: Ref Bool
   , buttonB:: Ref Bool -- on 'D'
-  -- Arrow keys:
-  , left :: Ref Bool
-  , right :: Ref Bool
+  , select :: Ref Bool -- Space
+  , start :: Ref Bool -- Enter
   , up :: Ref Bool
   , down :: Ref Bool
+  , left :: Ref Bool
+  , right :: Ref Bool
   }
 
-initKeys :: Eff Keys
-initKeys = do
-  start <- DefineRegister False
-  select <- DefineRegister False
-  buttonA <- DefineRegister False
-  buttonB <- DefineRegister False
-  left <- DefineRegister False
-  right <- DefineRegister False
-  up <- DefineRegister False
-  down <- DefineRegister False
+makeKeys :: Eff Keys
+makeKeys = do
+  buttonA <- def; buttonB <- def; select <- def; start <- def;
+  up <- def; down <- def; left <- def; right <- def;
   pure Keys{..}
+    where def = DefineRegister False
 
 seeKeys :: Keys -> Eff String
-seeKeys keys =
-  sequence [ do b <- read r; pure $ if b then c else '.' | (r,c) <- all ]
+seeKeys keys = sequence [ do b <- read r; pure $ if b then c else '.'
+                        | (r,c) <- labelledKeysInOrder keys ]
+
+labelledKeysInOrder :: Keys -> [(Ref Bool,Char)]
+labelledKeysInOrder keys =
+  [ (buttonA,'A'),(buttonB,'B'),(select,'S'),(start,'E')
+  , (up,'U'),(down,'D'),(left,'L'),(right,'R') ]
+  where Keys{buttonA,buttonB,select,start,up,down,left,right} = keys
+
+data State = State
+  { keys :: Keys
+  , strobe :: Ref Bool
+  , scan :: Ref [(Bool,Char)]
+  }
+
+initState :: Keys -> Eff State
+initState keys = do
+  strobe <- DefineRegister False
+  scan <- DefineRegister []
+  pure State {..}
+
+makeRegister :: State -> Ref U8
+makeRegister State{keys,strobe,scan} = Ref {onRead,onWrite}
   where
-    all = [ (start,'E') , (select,'S') , (buttonA,'A') , (buttonB,'B')
-          , (left,'L') , (right,'R') , (up,'U') , (down,'D')
-          ]
-    Keys{start,select,buttonA,buttonB,left,right,up,down} = keys
+    onWrite v = do
+      when (v `testBit` 0) $ do
+        write True strobe
+        bools <- sequence [ do b <- read r; pure (b,c) | (r,c) <- labelledKeysInOrder keys ]
+        write bools scan
+
+    onRead = do
+      read scan >>= \case
+        [] -> pure 1
+        (b,_tag):xs -> do
+          --when b $ Log (show ("Controller:read",_tag))
+          write xs scan
+          pure (if b then 1 else 0)

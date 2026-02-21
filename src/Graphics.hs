@@ -2,7 +2,7 @@ module Graphics (main) where
 
 import CommandLine (Config)
 import Control.Monad (when)
-import Controller (Keys(..),initKeys,seeKeys)
+import Controller (Keys(..),makeKeys,seeKeys)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
 import Framework (Eff(..),runEffect,Ref,write)
@@ -53,7 +53,7 @@ main config mapperE = do
       pure $ fromIntegral $ max (t2-t1) 1
 
   runEffect $ do
-    keys <- Controller.initKeys
+    keys <- Controller.makeKeys
     tab <- DefineRegister False
     let
       onPlot :: CInt -> CInt -> Colour -> Eff ()
@@ -82,7 +82,7 @@ main config mapperE = do
         where
 
     let graphics = PPU.Graphics { plot = onPlot, displayFrame }
-    makeSystem config mapperE tab graphics
+    makeSystem config mapperE tab keys graphics
 
   SDL.destroyRenderer renderer
   SDL.destroyWindow win

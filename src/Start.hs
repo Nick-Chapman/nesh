@@ -1,6 +1,7 @@
 module Start (main) where
 
 import CommandLine (Config(..),parseConfig)
+import Controller (makeKeys)
 import Framework (Eff(..),runEffect)
 import Graphics qualified (main)
 import Mapper (initMapper)
@@ -25,7 +26,8 @@ main = do
           let _displayFrame n = Log (printf ".%d" n)
           let displayFrame _ = Print "."
           let graphics = PPU.Graphics { plot, displayFrame }
-          makeSystem config mapperE tab graphics
+          keys <- Controller.makeKeys
+          makeSystem config mapperE tab keys graphics
 
       runEffect system
     True -> do

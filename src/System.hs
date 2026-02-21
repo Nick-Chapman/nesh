@@ -3,6 +3,7 @@ module System (makeSystem) where -- The full system under emulatiion
 import CPU qualified (cpu,mkState,trigger,Interrupt(NMI))
 import CommandLine (Config(..))
 import Control.Monad (when)
+import Controller (Keys,State,initState,makeRegister)
 import Framework (Eff(..),Ref,Bus,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busCPU,busPPU)
@@ -10,21 +11,22 @@ import PPU qualified (ppu,initState,Graphics)
 import Text.Printf (printf)
 import qualified PPU (State,registers,oamDMA)
 
-makeSystem  :: Config -> Eff Mapper -> Ref Bool -> PPU.Graphics -> Eff ()
-makeSystem config mapperE tab graphics = do
+makeSystem  :: Config -> Eff Mapper -> Ref Bool -> Keys -> PPU.Graphics -> Eff ()
+makeSystem config mapperE tab keys graphics = do
+  controllerState <- Controller.initState keys
   mapper <- mapperE
   extraCpuCycles <- DefineRegister 0
   ppuBus <- makePpuBus mapper
   ppuState <- PPU.initState ppuBus tab extraCpuCycles
-  cpuBus <- makeCpuBus mapper ppuState
+  cpuBus <- makeCpuBus mapper ppuState controllerState
   cpuState <- CPU.mkState extraCpuCycles cpuBus
   let cpu = CPU.cpu config cpuState
   let triggerNMI = CPU.trigger cpuState CPU.NMI
   let ppu = PPU.ppu triggerNMI ppuState graphics
   Parallel cpu ppu
 
-makeCpuBus :: Mapper -> PPU.State -> Eff Bus
-makeCpuBus mapper ppuState = do
+makeCpuBus :: Mapper -> PPU.State -> Controller.State -> Eff Bus
+makeCpuBus mapper ppuState controllerState = do
   wram <- DefineMemory 2048
 
   let
@@ -40,7 +42,7 @@ makeCpuBus mapper ppuState = do
         | a >= 0x4000 && a <= 0x4013 -> pure $ dummyRef_quiet "APU register" a
         | a == 0x4014 -> pure $ PPU.oamDMA ppuState cpuBus
         | a == 0x4015 -> pure $ dummyRef_quiet "APU status/control" a
-        | a == 0x4016 -> pure $ dummyRef_quiet "controller-port1" a
+        | a == 0x4016 -> pure $ Controller.makeRegister controllerState
         | a == 0x4017 -> pure $ dummyRef_quiet "controller-port2" a
         | a >= 0x8000 && a <= 0xffff -> Mapper.busCPU mapper a
         | otherwise -> error $ printf "CpuBus: unknown address = $%04X" a
