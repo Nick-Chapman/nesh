@@ -48,7 +48,7 @@ ppu :: Eff () -> State -> Graphics -> Eff ()
 ppu triggerNMI s graphics = loop 0
   where
     State{control,status} = s
-    Status{isInVBlankInterval,spriteOverflow} = status
+    Status{isInVBlankInterval,spriteOverflow,sprite0Hit} = status
     Graphics{displayFrame} = graphics
 
     loop frame = do
@@ -63,10 +63,11 @@ ppu triggerNMI s graphics = loop 0
     preVisibleLine = do
       write False isInVBlankInterval
       write False spriteOverflow
+      write False sprite0Hit
 
     visibleLine y = do
       spritePixMap <- renderScanLineSprites s y
-      renderScanLineBG s graphics y spritePixMap
+      renderScanLineBG s status graphics y spritePixMap
 
     vblankLine = do
       write True isInVBlankInterval
@@ -81,8 +82,8 @@ data Graphics = Graphics
   , displayFrame :: CInt -> Eff ()
   }
 
-renderScanLineBG :: State -> Graphics -> CInt -> SpritePixMap -> Eff ()
-renderScanLineBG s@State{tab,bus,control} Graphics{plot} y spritePixMap = do
+renderScanLineBG :: State -> Status -> Graphics -> CInt -> SpritePixMap -> Eff ()
+renderScanLineBG s@State{tab,bus,control} Status{sprite0Hit} Graphics{plot} y spritePixMap = do
   Control{nameTableId, backgroundPatternTableId} <- read control
   let nameTableLocation :: Addr = 0x2000 + fromIntegral (nameTableId * 1024)
   forM_ [0 .. 31] $ \tileX -> do
@@ -100,14 +101,19 @@ renderScanLineBG s@State{tab,bus,control} Graphics{plot} y spritePixMap = do
       bgCol <- case colourIndex of 0 -> getColour s 0 0
                                    _ -> getColour s paletteId colourIndex
       tab <- read tab
+      let optSpritePixel = Map.lookup x spritePixMap
       let
         resolveddCol =
-          case Map.lookup x spritePixMap of
+          case optSpritePixel of
             Nothing -> bgCol
-            Just (col,behindBG) -> do
+            Just (col,Sprite{behindBG}) -> do
               if (tab `xor` behindBG) && bgIsOpaque then bgCol else col
-
       plot x y resolveddCol
+
+      case optSpritePixel of
+        Nothing -> pure ()
+        Just (_,Sprite{id}) -> do
+          when (id==0 && bgIsOpaque) $ write True sprite0Hit
 
 getBackgroundPaletteId :: State -> NameTableId -> CInt -> CInt -> Eff PaletteId
 getBackgroundPaletteId State{bus} nameTableId x y = do
@@ -126,7 +132,7 @@ getBackgroundPaletteId State{bus} nameTableId x y = do
 ----------------------------------------------------------------------
 -- Sprites
 
-type SpritePixMap = Map CInt (Colour,Bool)
+type SpritePixMap = Map CInt (Colour,Sprite)
 
 renderScanLineSprites :: State -> CInt -> Eff SpritePixMap
 renderScanLineSprites state y = do
@@ -142,7 +148,8 @@ renderScanLineSprites state y = do
   Map.fromList . concat <$> sequence [ renderSprite state y sprite | sprite <- spritesToRender ]
 
 data Sprite = Sprite
-  { spriteX :: CInt
+  { id :: SpriteId
+  , spriteX :: CInt
   , spriteY :: CInt
   , is8x16 :: Bool
   , patternTableId :: PatternTableId
@@ -169,7 +176,7 @@ createSprite State{control,oamRam} id = do
   let behindBG = byte2 `testBit` 5
   let flipX = byte2 `testBit` 6
   let flipY = byte2 `testBit` 7
-  pure Sprite {spriteX,spriteY,is8x16,patternTableId,topTileId
+  pure Sprite {id,spriteX,spriteY,is8x16,patternTableId,topTileId
               ,paletteId,behindBG,flipX,flipY}
 
 shouldRenderInScanLine :: Sprite -> CInt -> Bool
@@ -178,11 +185,11 @@ shouldRenderInScanLine Sprite{spriteY,is8x16} y = do
   let height = if is8x16 then 16 else 8
   diffY >= 0 && diffY < height
 
-renderSprite :: State -> CInt -> Sprite -> Eff [(CInt,(Colour,Bool))]
+renderSprite :: State -> CInt -> Sprite -> Eff [(CInt,(Colour,Sprite))]
 renderSprite s@State{control} y sprite = do
   Control{spriteSize=is8x16} <- read control
   let Sprite{spriteX,spriteY,patternTableId,topTileId
-            ,paletteId,behindBG,flipX,flipY} = sprite
+            ,paletteId,flipX,flipY} = sprite
   let insideY = y - spriteY
   let tileId = topTileId + (if cond then 1 else 0)
         where cond = if flipY && is8x16 then insideY<=7 else insideY>7
@@ -195,7 +202,7 @@ renderSprite s@State{control} y sprite = do
   paletteColour3 <- getColour s paletteId 3
 
   pure
-    [ (x,(col,behindBG))
+    [ (x,(col,sprite))
     | (insideX::U3) <- [0..7]
     , let insideXflipped = if flipX then 7-insideX else insideX
     , let colourIndex = getColourIndex tile insideXflipped
