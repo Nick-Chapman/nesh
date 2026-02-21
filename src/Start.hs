@@ -23,12 +23,13 @@ main = do
         system = do
           tab <- DefineRegister False
           let plot _ _ _ = pure () -- ignore plottng
-          let _displayFrame n = Log (printf ".%d" n)
-          let displayFrame _ = Print "."
+          let displayFrame n = Print (printf ".%s" (show n))
+          --let displayFrame _ = Print "."
           let graphics = PPU.Graphics { plot, displayFrame }
           keys <- Controller.makeKeys
           makeSystem config mapperE tab keys graphics
 
       runEffect system
+      --putStr "\n"
     True -> do
       Graphics.main config mapperE

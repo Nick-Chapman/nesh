@@ -12,6 +12,7 @@ data Config = Config
   , stop_at :: Maybe Int
   , init_pc :: Maybe Addr -- Nothing means use reset vector
   , sdl :: Bool -- show graphics
+  , stop_frame :: Maybe Int
   }
 
 parseConfig :: [String] -> Config
@@ -23,6 +24,7 @@ parseConfig = loop config0
       , stop_at = Nothing
       , init_pc = Nothing
       , sdl = True
+      , stop_frame = Nothing
       }
     loop :: Config -> [String] -> Config
     loop acc = \case
@@ -31,5 +33,6 @@ parseConfig = loop config0
       "--trace-cpu":rest -> loop acc { trace_cpu = True } rest
       "--stop-at":n:rest -> loop acc { stop_at = Just (Prelude.read n) } rest
       "--init-pc":n:rest -> loop acc { init_pc = Just (Prelude.read n) } rest
+      "--stop-frame":n:rest -> loop acc { stop_frame = Just (Prelude.read n) } rest
       flag@('-':_):_ -> error (printf "unknown flag: %s" flag)
       rom:rest -> loop acc { rom } rest

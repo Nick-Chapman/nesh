@@ -17,6 +17,7 @@ import Text.Printf (printf)
 import Types (Addr,U8,Colour,HL(..),makeAddr,splitAddr)
 import Data.Map (Map)
 import Data.Map qualified as Map
+import CommandLine (Config(..))
 
 ----------------------------------------------------------------------
 -- types
@@ -44,14 +45,20 @@ type U2 = CInt
 --   240 visible lines, y:[0..239]
 --   21 post-visible lines, y:[240..260]
 
-ppu :: Eff () -> State -> Graphics -> Eff ()
-ppu triggerNMI s graphics = loop 0
+ppu :: Config -> Eff () -> State -> Graphics -> Eff ()
+ppu Config{stop_frame} triggerNMI s graphics = loop 0
   where
     State{control,status} = s
     Status{isInVBlankInterval,spriteOverflow,sprite0Hit} = status
     Graphics{displayFrame} = graphics
 
+    maybeHalt =
+      case stop_frame of
+        Nothing -> \_frame -> pure ()
+        Just n -> \frame -> when (frame >= fromIntegral n) Halt
+
     loop frame = do
+      maybeHalt frame
       forM_ [(-1)..261] $ \y -> do
         when (y == -1) preVisibleLine
         when (y >= 0 && y <= 239) $ visibleLine y

@@ -22,7 +22,7 @@ makeSystem config mapperE tab keys graphics = do
   cpuState <- CPU.mkState extraCpuCycles cpuBus
   let cpu = CPU.cpu config cpuState
   let triggerNMI = CPU.trigger cpuState CPU.NMI
-  let ppu = PPU.ppu triggerNMI ppuState graphics
+  let ppu = PPU.ppu config triggerNMI ppuState graphics
   Parallel cpu ppu
 
 makeCpuBus :: Mapper -> PPU.State -> Controller.State -> Eff Bus
