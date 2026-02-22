@@ -4,7 +4,7 @@ import CPU qualified (cpu,mkState,trigger,Interrupt(NMI))
 import CommandLine (Config(..))
 import Control.Monad (when)
 import Controller (Keys,State,initState,makeRegister)
-import Framework (Eff(..),Ref,Bus,dummyRef_quiet)
+import Framework (Eff(..),Ref,Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busCPU,busPPU)
 import PPU qualified (ppu,initState,Graphics)
@@ -37,13 +37,20 @@ makeCpuBus mapper ppuState controllerState = do
       if
         | a <= 0x07ff -> pure $ wram (fromIntegral a)
         | a >= 0x0800 && a <= 0x0fff -> pure $ wram (fromIntegral a - 0x800)
-        -- TODO: more mirrors
         | a >= 0x2000 && a <= 0x2007 -> PPU.registers ppuState a
+
+        -- The next range should be mirrors for the PPU registers. Referenced by ice game.
+        | a >= 0x2008 && a <= 0x3fff -> pure $ dummyRef "[$2008..$3fff]" a
+
         | a >= 0x4000 && a <= 0x4013 -> pure $ dummyRef_quiet "APU register" a
         | a == 0x4014 -> pure $ PPU.oamDMA ppuState cpuBus
         | a == 0x4015 -> pure $ dummyRef_quiet "APU status/control" a
         | a == 0x4016 -> pure $ Controller.makeRegister controllerState
         | a == 0x4017 -> pure $ dummyRef_quiet "controller-port2" a
+
+        -- The next range can be responded to by the mapper/cartidge. Referenced by ice game.
+        | a >= 0x4020 && a <= 0x7fff -> pure $ dummyRef "[$4020..$7fff]" a -- ice
+
         | a >= 0x8000 && a <= 0xffff -> Mapper.busCPU mapper a
         | otherwise -> error $ printf "CpuBus: unknown address = $%04X" a
 
