@@ -1,20 +1,22 @@
 module Mapper
   ( Mapper, initMapper
   , busCPU, busPPU
+  , mirroring
   ) where
 
 import Prelude hiding (read)
 import Control.Monad (when)
 import Data.Array (Array,listArray,(!))
-import Data.Bits ((.&.),(.|.),shiftR) -- testBit
+import Data.Bits ((.&.),(.|.),shiftR,testBit)
 import Data.ByteString.Internal (w2c)
 import Framework (Ref(..),Eff(..),Bus,read,write)
 import Text.Printf (printf)
-import Types (U8)
+import Types (U8,Mirroring(..))
 
 data Mapper = Mapper
   { busCPU :: Bus
   , busPPU :: Bus
+  , mirroring :: Mirroring
   }
 
 noWrite :: String -> U8 -> Eff ()
@@ -42,7 +44,7 @@ initMapper bs = do
   let byte7 = bs !! 7
   let mapperNumber = byte7 .&. 0xf0 .|. byte6 `shiftR` 4
 
-  --let ntm = if byteToUnsigned (bs !! 6) `testBit` 0 then NTM_Horizontal else NTM_Vertical
+  let mirroring = if byte6 `testBit` 0 then Vertical else Horizontal
 
   let actualSize = length bs
   let expectedSize = headerSize + (x * prgSize) + (y * chrSize)
@@ -86,7 +88,7 @@ initMapper bs = do
           | a >= 0xC000 && a <= 0xffff -> pure $ prg2 ! (fromIntegral a - 0xC000)
           | otherwise -> error $ printf "Mapper0(busCPU): address = $%04X" a
 
-      pure Mapper { busPPU, busCPU }
+      pure Mapper { busPPU, busCPU, mirroring }
 
     2 -> do
       when (y /= 0) $ error (printf "Mapper2: y=%d, but only CHR RAM supported (y=0)" y)
@@ -120,7 +122,7 @@ initMapper bs = do
           | otherwise -> do
               error $ printf "Mapper(busCPU) : address = $%04X" a
 
-      pure Mapper { busPPU, busCPU }
+      pure Mapper { busPPU, busCPU, mirroring }
 
 
     _ -> do

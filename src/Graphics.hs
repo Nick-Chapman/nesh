@@ -25,7 +25,7 @@ main config mapperE = do
 
   let screenW = 256 + 2*border
   let screenH = 240 + 2*border
-  let sf = 2
+  let sf = 3
 
   let
     scale :: CInt -> CInt
@@ -34,7 +34,7 @@ main config mapperE = do
   let windowSize = V2 (scale screenW) (scale screenH)
 
   let winConfig = SDL.defaultWindow { SDL.windowInitialSize = windowSize
-                                    , SDL.windowPosition = SDL.Absolute (SDL.P (SDL.V2 1000 100))
+                                    , SDL.windowPosition = SDL.Absolute (SDL.P (SDL.V2 1000 0))
                                     }
   win <- SDL.createWindow (Text.pack "nesh") $ winConfig
   renderer <- SDL.createRenderer win (-1) SDL.defaultRenderer

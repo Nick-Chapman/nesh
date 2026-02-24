@@ -4,6 +4,7 @@ module Types
   , HL(..)
   , Addr, makeAddr, splitAddr
   , Colour
+  , Mirroring(..)
   ) where
 
 import Data.Word (Word8,Word16)
@@ -25,3 +26,5 @@ splitAddr addr = do
   HL { hi = fromIntegral (addr `shiftR` 8), lo = fromIntegral (addr .&. 0xff) }
 
 type Colour = V4 U8
+
+data Mirroring = Horizontal | Vertical deriving Show
