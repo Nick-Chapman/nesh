@@ -5,9 +5,9 @@ import Control.Monad (when)
 import Controller (Keys(..),makeKeys,seeKeys)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),runEffect,Ref,write)
+import Framework (Eff(..),runEffect,write)
 import Mapper (Mapper)
-import PPU qualified (Graphics(..))
+import PPU qualified (Graphics(..),Hack(..),makeHack)
 import Prelude hiding (read)
 import SDL (V2(..),V4(..),($=))
 import System (makeSystem)
@@ -39,8 +39,12 @@ main config mapperE = do
   win <- SDL.createWindow (Text.pack "nesh") $ winConfig
   renderer <- SDL.createRenderer win (-1) SDL.defaultRenderer
 
-  SDL.rendererDrawColor renderer $= V4 100 100 100 255
-  SDL.clear renderer
+  let
+    greyRenderer = do
+      SDL.rendererDrawColor renderer $= V4 100 100 100 255
+      SDL.clear renderer
+
+  greyRenderer
   SDL.present renderer
 
   lastTicks <- SDL.ticks >>= newIORef
@@ -54,7 +58,7 @@ main config mapperE = do
 
   runEffect $ do
     keys <- Controller.makeKeys
-    tab <- DefineRegister False
+    hack <- PPU.makeHack
     let
       onPlot :: CInt -> CInt -> Colour -> Eff ()
       onPlot x0 y0 col = IO $ do
@@ -76,20 +80,21 @@ main config mapperE = do
       displayFrame :: CInt -> Eff ()
       displayFrame frame = do
         IO $ SDL.present renderer
+        IO $ greyRenderer
         events <- IO $ SDL.pollEvents
-        mapM_ (processEvent keys tab) events
+        mapM_ (processEvent keys hack) events
         updateTitleBar frame
         where
 
     let graphics = PPU.Graphics { plot = onPlot, displayFrame }
-    makeSystem config mapperE tab keys graphics
+    makeSystem config mapperE hack keys graphics
 
   SDL.destroyRenderer renderer
   SDL.destroyWindow win
   SDL.quit
 
-processEvent :: Keys -> Ref Bool -> SDL.Event -> Eff ()
-processEvent keys tab e = do
+processEvent :: Keys -> PPU.Hack -> SDL.Event -> Eff ()
+processEvent keys hack e = do
   case e of
     SDL.Event _t SDL.QuitEvent -> Halt
     SDL.Event _ (SDL.KeyboardEvent ke) -> do
@@ -101,8 +106,11 @@ processEvent keys tab e = do
         SDL.KeycodeEscape -> quit
         SDL.KeycodeQ -> quit
 
-        -- Exploration/hacking. Currently invert the sense of "behindBG" for lolz
-        SDL.KeycodeTab -> drives tab
+        -- Exploration/hacking
+        --SDL.KeycodeTab -> drives invertBehind -- for lolz
+        SDL.KeycodeTab -> drives noCPU
+        SDL.KeycodeLShift -> drives noSprites
+        SDL.KeycodeLCtrl -> drives noBG
 
         -- Controller-1 keys
         SDL.KeycodeReturn -> drives start
@@ -118,4 +126,5 @@ processEvent keys tab e = do
     _ -> pure ()
 
     where
+      PPU.Hack{invertBehind=_,noCPU,noBG,noSprites} = hack
       Keys{start,select,buttonA,buttonB,left,right,up,down} = keys

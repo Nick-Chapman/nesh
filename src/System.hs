@@ -4,21 +4,21 @@ import CPU qualified (cpu,mkState,trigger,Interrupt(NMI))
 import CommandLine (Config(..))
 import Control.Monad (when)
 import Controller (Keys,State,initState,makeRegister)
-import Framework (Eff(..),Ref,Bus,dummyRef,dummyRef_quiet)
+import Framework (Eff(..),Bus,dummyRef,dummyRef_quiet)
 import Mapper (Mapper)
 import Mapper qualified (busCPU,busPPU,mirroring)
-import PPU qualified (ppu,initState,Graphics)
+import PPU qualified (ppu,initState,Graphics,Hack)
 import Text.Printf (printf)
 import Types (Mirroring(..))
 import qualified PPU (State,registers,oamDMA)
 
-makeSystem  :: Config -> Eff Mapper -> Ref Bool -> Keys -> PPU.Graphics -> Eff ()
-makeSystem config mapperE tab keys graphics = do
+makeSystem  :: Config -> Eff Mapper -> PPU.Hack -> Keys -> PPU.Graphics -> Eff ()
+makeSystem config mapperE hack keys graphics = do
   controllerState <- Controller.initState keys
   mapper <- mapperE
   extraCpuCycles <- DefineRegister 0
   ppuBus <- makePpuBus mapper
-  ppuState <- PPU.initState ppuBus tab extraCpuCycles
+  ppuState <- PPU.initState ppuBus hack extraCpuCycles
   cpuBus <- makeCpuBus mapper ppuState controllerState
   cpuState <- CPU.mkState extraCpuCycles cpuBus
   let cpu = CPU.cpu config cpuState

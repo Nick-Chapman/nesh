@@ -5,7 +5,7 @@ import Controller (makeKeys)
 import Framework (Eff(..),runEffect)
 import Graphics qualified (main)
 import Mapper (initMapper)
-import PPU qualified (Graphics(..))
+import PPU qualified (Graphics(..),makeHack)
 import System (makeSystem)
 import System.Environment (getArgs)
 import Text.Printf (printf)
@@ -21,13 +21,13 @@ main = do
     False -> do
       let
         system = do
-          tab <- DefineRegister False
+          hack <- PPU.makeHack
           let plot _ _ _ = pure () -- ignore plottng
           let displayFrame n = Print (printf ".%s" (show n))
           --let displayFrame _ = Print "."
           let graphics = PPU.Graphics { plot, displayFrame }
           keys <- Controller.makeKeys
-          makeSystem config mapperE tab keys graphics
+          makeSystem config mapperE hack keys graphics
 
       runEffect system
       --putStr "\n"

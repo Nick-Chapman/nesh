@@ -1,5 +1,5 @@
 module PPU
-  ( State, initState
+  ( State, initState, Hack(..), makeHack
   , registers, oamDMA
   , ppu
   , Graphics(..)
@@ -18,6 +18,24 @@ import Types (Addr,U8,Colour,HL(..),makeAddr,splitAddr)
 import Data.Map (Map)
 import Data.Map qualified as Map
 import CommandLine (Config(..))
+
+----------------------------------------------------------------------
+-- PPU Hack
+
+data Hack = Hack
+  { invertBehind :: Ref Bool
+  , noCPU :: Ref Bool
+  , noBG :: Ref Bool
+  , noSprites :: Ref Bool
+  }
+
+makeHack :: Eff Hack
+makeHack = do
+  invertBehind <- DefineRegister False
+  noCPU <- DefineRegister False
+  noBG <- DefineRegister False
+  noSprites <- DefineRegister False
+  pure Hack {..}
 
 ----------------------------------------------------------------------
 -- types
@@ -46,11 +64,11 @@ type U2 = CInt
 --   21 post-visible lines, y:[240..260]
 
 ppu :: Config -> Eff () -> State -> Graphics -> Eff ()
-ppu Config{stop_frame} triggerNMI s graphics = loop 0
+ppu Config{stop_frame} triggerNMI s g = loop 0
   where
-    State{control,status} = s
+    State{control,status,hack=Hack{noCPU}} = s
     Status{isInVBlankInterval,spriteOverflow,sprite0Hit} = status
-    Graphics{displayFrame} = graphics
+    Graphics{displayFrame} = g
 
     maybeHalt =
       case stop_frame of
@@ -63,9 +81,14 @@ ppu Config{stop_frame} triggerNMI s graphics = loop 0
         when (y == -1) preVisibleLine
         when (y >= 0 && y <= 239) $ visibleLine y
         when (y == 241) vblankLine
-        AdvancePPU 341
+        advanceTiming
       displayFrame frame
       loop (frame+1)
+
+    advanceTiming = do
+      read noCPU >>= \case
+        True -> pure ()
+        False -> AdvancePPU 341
 
     preVisibleLine = do
       write False isInVBlankInterval
@@ -73,13 +96,13 @@ ppu Config{stop_frame} triggerNMI s graphics = loop 0
       write False sprite0Hit
 
     visibleLine y = do
-      spritePixMap <- renderScanLineSprites s y
-      renderScanLineBG s graphics y spritePixMap
+      renderScanLine s g y
 
     vblankLine = do
       write True isInVBlankInterval
       Control{generateNMIOnVBlank=gen} <- read control
-      when gen $ triggerNMI
+      noCPU <- read noCPU
+      when (not noCPU && gen) $ triggerNMI
 
 ----------------------------------------------------------------------
 -- Graphics
@@ -89,9 +112,26 @@ data Graphics = Graphics
   , displayFrame :: CInt -> Eff ()
   }
 
+renderScanLine :: State -> Graphics -> CInt -> Eff ()
+renderScanLine s@State{hack} g y = do
+  let Hack{noSprites,noBG} = hack
+  spritePixMap <- do
+    read noSprites >>= \case
+      True -> pure Map.empty
+      False -> renderScanLineSprites s y
+
+  read noBG >>= \case
+    True -> withoutBackground   g y spritePixMap
+    False -> renderScanLineBG s g y spritePixMap
+
+withoutBackground :: Graphics -> CInt -> SpritePixMap -> Eff ()
+withoutBackground Graphics{plot} y spritePixMap = do
+  sequence_ [ do plot x y col | (x,(col,_)) <- Map.toList spritePixMap]
+
 renderScanLineBG :: State -> Graphics -> CInt -> SpritePixMap -> Eff ()
 renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
-  let State{tab,bus,status,control,scrollX,scrollY} = s
+  let State{hack,bus,status,control,scrollX,scrollY} = s
+  let Hack{invertBehind} = hack
   let Status{sprite0Hit} = status
   Control{nameTableId=ntBase, backgroundPatternTableId} <- read control
   scrollX <- read scrollX
@@ -123,14 +163,14 @@ renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
         let bgIsOpaque = colourIndex /= 0
         bgCol <- case colourIndex of 0 -> getColour s 0 0
                                      _ -> getColour s paletteId colourIndex
-        tab <- read tab
+        invertBehind <- read invertBehind
         let optSpritePixel = Map.lookup (pixelX + xx) spritePixMap
         let
           resolveddCol =
             case optSpritePixel of
               Nothing -> bgCol
               Just (col,Sprite{behindBG}) -> do
-                if (tab `xor` behindBG) && bgIsOpaque then bgCol else col
+                if (invertBehind `xor` behindBG) && bgIsOpaque then bgCol else col
         plot (pixelX + xx) pixelY resolveddCol
         case optSpritePixel of
           Nothing -> pure ()
@@ -443,13 +483,12 @@ data State = State
   , oamRam :: U8 -> Ref U8
   , scrollX :: Ref U8
   , scrollY :: Ref U8
-  -- tab key: invert sense of "behindBG" when rendering sprite/background. Just for lolz
-  , tab :: Ref Bool
   , extraCpuCycles :: Ref Int
+  , hack :: Hack
   }
 
-initState :: Bus -> Ref Bool -> Ref Int -> Eff State
-initState bus tab extraCpuCycles =  do
+initState :: Bus -> Hack -> Ref Int -> Eff State
+initState bus hack extraCpuCycles =  do
   control <- DefineRegister (byte2control 0)
   status <- initStatus
   latch <- DefineRegister False
