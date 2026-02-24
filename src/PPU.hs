@@ -74,7 +74,7 @@ ppu Config{stop_frame} triggerNMI s graphics = loop 0
 
     visibleLine y = do
       spritePixMap <- renderScanLineSprites s y
-      renderScanLineBG s status graphics y spritePixMap
+      renderScanLineBG s graphics y spritePixMap
 
     vblankLine = do
       write True isInVBlankInterval
@@ -89,45 +89,62 @@ data Graphics = Graphics
   , displayFrame :: CInt -> Eff ()
   }
 
-renderScanLineBG :: State -> Status -> Graphics -> CInt -> SpritePixMap -> Eff ()
-renderScanLineBG s@State{tab,bus,control} Status{sprite0Hit} Graphics{plot} y spritePixMap = do
-  Control{nameTableId, backgroundPatternTableId} <- read control
-  let nameTableLocation :: Addr = 0x2000 + fromIntegral (nameTableId * 1024)
-  forM_ [0 .. 31] $ \tileX -> do
-    let xa = tileX * 8
-    let tileY = y `div` 8
-    let tileIndex = fromIntegral (tileY * 32 + tileX)
-    tileId :: TileId <- bus (nameTableLocation + tileIndex) >>= read
-    let tileInsideY = y `mod` 8
-    tile <- makeTile s backgroundPatternTableId tileId tileInsideY
-    paletteId <- getBackgroundPaletteId s nameTableId xa y
-    forM_ [0::U3 ..7] $ \xb -> do
-      let x = xa + xb
-      let colourIndex = getColourIndex tile xb
-      let bgIsOpaque = colourIndex /= 0
-      bgCol <- case colourIndex of 0 -> getColour s 0 0
-                                   _ -> getColour s paletteId colourIndex
-      tab <- read tab
-      let optSpritePixel = Map.lookup x spritePixMap
+renderScanLineBG :: State -> Graphics -> CInt -> SpritePixMap -> Eff ()
+renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
+  let State{tab,bus,status,control,scrollX,scrollY} = s
+  let Status{sprite0Hit} = status
+  Control{nameTableId=ntBase, backgroundPatternTableId} <- read control
+  scrollX <- read scrollX
+  scrollY <- read scrollY
+  let scrolledY = fromIntegral scrollY + pixelY
+  let nameTableY = scrolledY `mod` 240
+  let tileInsideY = nameTableY `mod` 8
+  let
+    loop pixelX = if pixelX > 255 then pure () else do
+      let scrolledX = fromIntegral scrollX + pixelX
+      let nameTableX = scrolledX `mod` 256
+      let tileStartX = nameTableX `mod` 8
+      let tilePixels = min (8 - tileStartX) (256 - pixelX) -- emudevz bug: nameTableX not pixelX
       let
-        resolveddCol =
-          case optSpritePixel of
-            Nothing -> bgCol
-            Just (col,Sprite{behindBG}) -> do
-              if (tab `xor` behindBG) && bgIsOpaque then bgCol else col
-      plot x y resolveddCol
-
-      case optSpritePixel of
-        Nothing -> pure ()
-        Just (_,Sprite{id}) -> do
-          when (id==0 && bgIsOpaque) $ write True sprite0Hit
+        nameTableId =
+          (ntBase +
+           (if scrolledX >= 256 then 1 else 0) +
+           (if scrolledY >= 240 then 2 else 0)
+          ) `mod` 4
+      let nameTableAddr = 0x2000 + fromIntegral (nameTableId * 1024)
+      let tileX = nameTableX `div` 8
+      let tileY = nameTableY `div` 8
+      let tileIndex = fromIntegral (tileY * 32 + tileX)
+      tileId :: TileId <- bus (nameTableAddr + tileIndex) >>= read
+      tile <- makeTile s backgroundPatternTableId tileId tileInsideY
+      paletteId <- getBackgroundPaletteId s nameTableId nameTableX nameTableY
+      forM_ [0::U3 ..tilePixels-1] $ \xx -> do
+        let colourIndex = getColourIndex tile (tileStartX + xx)
+        let bgIsOpaque = colourIndex /= 0
+        bgCol <- case colourIndex of 0 -> getColour s 0 0
+                                     _ -> getColour s paletteId colourIndex
+        tab <- read tab
+        let optSpritePixel = Map.lookup (pixelX + xx) spritePixMap
+        let
+          resolveddCol =
+            case optSpritePixel of
+              Nothing -> bgCol
+              Just (col,Sprite{behindBG}) -> do
+                if (tab `xor` behindBG) && bgIsOpaque then bgCol else col
+        plot (pixelX + xx) pixelY resolveddCol
+        case optSpritePixel of
+          Nothing -> pure ()
+          Just (_,Sprite{id}) -> do
+            when (id==0 && bgIsOpaque) $ write True sprite0Hit
+      loop (pixelX + tilePixels)
+  loop 0
 
 getBackgroundPaletteId :: State -> NameTableId -> CInt -> CInt -> Eff PaletteId
 getBackgroundPaletteId State{bus} nameTableId x y = do
   let xx = x `div` 32
   let yy = y `div` 32
-  let nameTableLocation = 0x2000 + fromIntegral (nameTableId * 1024)
-  let atableStart = nameTableLocation + 960
+  let nameTableAddr = 0x2000 + fromIntegral (nameTableId * 1024)
+  let atableStart = nameTableAddr + 960
   let atableAddr :: Addr = atableStart + fromIntegral (xx + yy * 8)
   atableByte <- bus atableAddr >>= read
   let right = (x `div` 16) `testBit` 0
@@ -298,10 +315,22 @@ registers s = do
       | a == 0x2002 -> ppuStatus s
       | a == 0x2003 -> oamAddr s
       | a == 0x2004 -> oamData s
-      | a == 0x2005 -> dummyRef_quiet "ppuScroll" a
+      | a == 0x2005 -> ppuScroll s
       | a == 0x2006 -> ppuAddr s
       | a == 0x2007 -> ppuData s
       | otherwise -> error $ printf "PPU.registers: address = $%04X" a
+
+ppuScroll :: State -> Ref U8
+ppuScroll State{scrollX,scrollY,latch} = Ref {onRead,onWrite}
+  where
+    onRead = Error "ppuAddr: read"
+    onWrite v = do
+      latchV <- read latch
+      --Log (show ("ppuScroll/write",latchV,v))
+      write (not latchV) latch
+      case latchV of
+        True -> write v scrollY
+        False -> write v scrollX
 
 ppuCtrl :: State -> Ref U8
 ppuCtrl State{control} = Ref {onRead,onWrite}
@@ -412,6 +441,8 @@ data State = State
   , buffer :: Ref U8
   , oamOffset :: Ref U8
   , oamRam :: U8 -> Ref U8
+  , scrollX :: Ref U8
+  , scrollY :: Ref U8
   -- tab key: invert sense of "behindBG" when rendering sprite/background. Just for lolz
   , tab :: Ref Bool
   , extraCpuCycles :: Ref Int
@@ -427,6 +458,8 @@ initState bus tab extraCpuCycles =  do
   oamOffset <- DefineRegister 0
   oamRamI <- DefineMemory 256
   let oamRam = oamRamI . fromIntegral
+  scrollX <- DefineRegister 0
+  scrollY <- DefineRegister 0
   pure State {..}
 
 ----------------------------------------------------------------------
