@@ -77,7 +77,7 @@ ppu Config{stop_frame} triggerNMI s g = loop 0
 
     loop frame = do
       maybeHalt frame
-      forM_ [(-1)..261] $ \y -> do
+      forM_ [(-1)..260] $ \y -> do
         when (y == -1) preVisibleLine
         when (y >= 0 && y <= 239) $ visibleLine y
         when (y == 241) vblankLine
