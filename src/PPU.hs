@@ -64,7 +64,7 @@ type U2 = CInt
 --   21 post-visible lines, y:[240..260]
 
 ppu :: Config -> Eff () -> State -> Graphics -> Eff ()
-ppu Config{stop_frame} triggerNMI s g = loop 0
+ppu Config{stop_frame} triggerNMI s g = loop 1 -- was 0
   where
     State{control,status,hack=Hack{noCPU}} = s
     Status{isInVBlankInterval,spriteOverflow,sprite0Hit} = status

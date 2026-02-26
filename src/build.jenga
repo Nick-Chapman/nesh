@@ -29,3 +29,4 @@ default-extensions:
 packages:
   echo bytestring >> $@
   echo sdl2 >> $@
+  echo clock >> $@

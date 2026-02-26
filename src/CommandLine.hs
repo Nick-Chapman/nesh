@@ -11,9 +11,11 @@ data Config = Config
   , trace_cpu :: Bool
   , stop_at :: Maybe Int
   , init_pc :: Maybe Addr -- Nothing means use reset vector
-  , sdl :: Bool -- show graphics
+  , no_sdl :: Bool -- dont show graphics
   , stop_frame :: Maybe Int
+  , perf_mode :: Bool
   }
+  deriving Show
 
 parseConfig :: [String] -> Config
 parseConfig = loop config0
@@ -23,13 +25,15 @@ parseConfig = loop config0
       , trace_cpu = False
       , stop_at = Nothing
       , init_pc = Nothing
-      , sdl = True
+      , no_sdl = False
       , stop_frame = Nothing
+      , perf_mode = False
       }
     loop :: Config -> [String] -> Config
     loop acc = \case
       [] -> acc
-      "--no-sdl":rest -> loop acc { sdl = False } rest
+      "--perf":rest -> loop acc { perf_mode = True } rest
+      "--no-sdl":rest -> loop acc { no_sdl = True } rest
       "--trace-cpu":rest -> loop acc { trace_cpu = True } rest
       "--stop-at":n:rest -> loop acc { stop_at = Just (Prelude.read n) } rest
       "--init-pc":n:rest -> loop acc { init_pc = Just (Prelude.read n) } rest
