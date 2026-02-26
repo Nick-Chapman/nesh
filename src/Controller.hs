@@ -4,7 +4,7 @@ module Controller
 
 import Control.Monad (when)
 import Data.Bits (testBit)
-import Framework (Eff(..),Ref(..),read,write)
+import Framework --(Eff(..),Ref(..),read,write)
 import Prelude hiding (read)
 import Types (U8)
 
@@ -24,7 +24,7 @@ makeKeys = do
   buttonA <- def; buttonB <- def; select <- def; start <- def;
   up <- def; down <- def; left <- def; right <- def;
   pure Keys{..}
-    where def = DefineRegister False
+    where def = defineRegister False
 
 seeKeys :: Keys -> Eff String
 seeKeys keys = sequence [ do b <- read r; pure $ if b then c else '.'
@@ -44,8 +44,8 @@ data State = State
 
 initState :: Keys -> Eff State
 initState keys = do
-  strobe <- DefineRegister False
-  scan <- DefineRegister []
+  strobe <- defineRegister False
+  scan <- defineRegister []
   pure State {..}
 
 makeRegister :: State -> Ref U8

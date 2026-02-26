@@ -10,7 +10,8 @@ import Data.Array (Array,(!),listArray)
 import Data.Bits (testBit,(.&.),(.|.),xor,shiftR)
 import Data.Word (Word32)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),Ref(..),read,write,update,Bus,dummyRef_quiet)
+import Framework (Ref(..),read,write,update,Bus,dummyRef_quiet
+                 ,Eff,defineRegister,defineMemory,effError,halt,advancePPU)
 import Prelude hiding (read)
 import SDL (V4(..))
 import Text.Printf (printf)
@@ -31,10 +32,10 @@ data Hack = Hack
 
 makeHack :: Eff Hack
 makeHack = do
-  invertBehind <- DefineRegister False
-  noCPU <- DefineRegister False
-  noBG <- DefineRegister False
-  noSprites <- DefineRegister False
+  invertBehind <- defineRegister False
+  noCPU <- defineRegister False
+  noBG <- defineRegister False
+  noSprites <- defineRegister False
   pure Hack {..}
 
 ----------------------------------------------------------------------
@@ -73,7 +74,7 @@ ppu Config{stop_frame} triggerNMI s g = loop 1 -- was 0
     maybeHalt =
       case stop_frame of
         Nothing -> \_frame -> pure ()
-        Just n -> \frame -> when (frame >= fromIntegral n) Halt
+        Just n -> \frame -> when (frame >= fromIntegral n) halt
 
     loop frame = do
       maybeHalt frame
@@ -88,7 +89,7 @@ ppu Config{stop_frame} triggerNMI s g = loop 1 -- was 0
     advanceTiming = do
       read noCPU >>= \case
         True -> pure ()
-        False -> AdvancePPU 341
+        False -> advancePPU 341
 
     preVisibleLine = do
       write False isInVBlankInterval
@@ -363,7 +364,7 @@ registers s = do
 ppuScroll :: State -> Ref U8
 ppuScroll State{scrollX,scrollY,latch} = Ref {onRead,onWrite}
   where
-    onRead = Error "ppuAddr: read"
+    onRead = effError "ppuAddr: read"
     onWrite v = do
       latchV <- read latch
       --Log (show ("ppuScroll/write",latchV,v))
@@ -375,7 +376,7 @@ ppuScroll State{scrollX,scrollY,latch} = Ref {onRead,onWrite}
 ppuCtrl :: State -> Ref U8
 ppuCtrl State{control} = Ref {onRead,onWrite}
   where
-    onRead = Error "ppuCtrl: read"
+    onRead = effError "ppuCtrl: read"
     onWrite v = write (byte2control v) control
 
 ppuStatus :: State -> Ref U8
@@ -389,12 +390,12 @@ ppuStatus State{status,latch} = Ref {onRead,onWrite}
       write False latch
       pure v
     onWrite v = do
-      Error $ printf "ppuStatus: write %02x" v
+      effError $ printf "ppuStatus: write %02x" v
 
 ppuAddr :: State -> Ref U8
 ppuAddr State{addr,latch} = Ref {onRead,onWrite}
   where
-    onRead = Error "ppuAddr: read"
+    onRead = effError "ppuAddr: read"
     onWrite v = do
       latchV <- read latch
       write (not latchV) latch
@@ -443,7 +444,7 @@ writeHI hi r = do
 oamAddr :: State -> Ref U8
 oamAddr State{oamOffset} = Ref {onRead,onWrite}
   where
-    onRead = Error "oamAddrRegister: read"
+    onRead = effError "oamAddrRegister: read"
     onWrite v = do write v oamOffset
 
 oamData :: State -> Ref U8
@@ -460,7 +461,7 @@ oamData State{oamOffset,oamRam} = Ref {onRead,onWrite}
 oamDMA :: State -> Bus -> Ref U8
 oamDMA State{oamRam,extraCpuCycles} cpuBus = Ref {onRead,onWrite}
   where
-    onRead = Error "oamDMA: read"
+    onRead = effError "oamDMA: read"
     onWrite hi = do
       forM_ [0..255] $ \lo -> do
         let a = makeAddr HL {hi,lo}
@@ -489,16 +490,16 @@ data State = State
 
 initState :: Bus -> Hack -> Ref Int -> Eff State
 initState bus hack extraCpuCycles =  do
-  control <- DefineRegister (byte2control 0)
+  control <- defineRegister (byte2control 0)
   status <- initStatus
-  latch <- DefineRegister False
-  addr <- DefineRegister 0
-  buffer <- DefineRegister 0
-  oamOffset <- DefineRegister 0
-  oamRamI <- DefineMemory 256
+  latch <- defineRegister False
+  addr <- defineRegister 0
+  buffer <- defineRegister 0
+  oamOffset <- defineRegister 0
+  oamRamI <- defineMemory 256
   let oamRam = oamRamI . fromIntegral
-  scrollX <- DefineRegister 0
-  scrollY <- DefineRegister 0
+  scrollX <- defineRegister 0
+  scrollY <- defineRegister 0
   pure State {..}
 
 ----------------------------------------------------------------------
@@ -535,9 +536,9 @@ data Status = Status
 
 initStatus :: Eff Status
 initStatus = do
-  spriteOverflow <- DefineRegister False
-  sprite0Hit <- DefineRegister False
-  isInVBlankInterval <- DefineRegister True
+  spriteOverflow <- defineRegister False
+  sprite0Hit <- defineRegister False
+  isInVBlankInterval <- defineRegister True
   pure Status { spriteOverflow, sprite0Hit, isInVBlankInterval }
 
 readStatus :: Status -> Eff U8

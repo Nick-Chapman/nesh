@@ -4,12 +4,15 @@ module Mapper
   , mirroring
   ) where
 
-import Prelude hiding (read)
+import Prelude hiding (read,log)
 import Control.Monad (when)
 import Data.Array (Array,listArray,(!))
 import Data.Bits ((.&.),(.|.),shiftR,testBit)
 import Data.ByteString.Internal (w2c)
-import Framework (Ref(..),Eff(..),Bus,read,write)
+
+import Framework (Ref(..),Bus,read,write
+                 ,Eff,defineRegister,defineMemory,effError,log)
+
 import Text.Printf (printf)
 import Types (U8,Mirroring(..))
 
@@ -20,7 +23,7 @@ data Mapper = Mapper
   }
 
 noWrite :: String -> U8 -> Eff ()
-noWrite tag = \_ -> Error (printf "unexpected write to Rom: %s" tag)
+noWrite tag = \_ -> effError (printf "unexpected write to Rom: %s" tag)
 
 initMapper :: [U8] -> Eff Mapper
 initMapper bs = do
@@ -50,7 +53,7 @@ initMapper bs = do
   let expectedSize = headerSize + (x * prgSize) + (y * chrSize)
 
   when (actualSize /= expectedSize) $ do
-    Log $ printf "bad file size: (mapper=%d,x=%d,y=%d) actual=%d, expected=%d, diff=%d"
+    log $ printf "bad file size: (mapper=%d,x=%d,y=%d) actual=%d, expected=%d, diff=%d"
       mapperNumber x y
       actualSize expectedSize (actualSize-expectedSize)
 
@@ -59,7 +62,7 @@ initMapper bs = do
 
       busPPU :: Bus <- case y of
         0 -> do
-          chr <- DefineMemory chrSize
+          chr <- defineMemory chrSize
           pure $ \a -> pure $ do chr (fromIntegral a)
         1 -> do
           let chr = makeRom (noWrite "mapper0/chr") chrSize (headerSize + x * prgSize)
@@ -92,14 +95,14 @@ initMapper bs = do
 
     2 -> do
       when (y /= 0) $ error (printf "Mapper2: y=%d, but only CHR RAM supported (y=0)" y)
-      chr <- DefineMemory chrSize
+      chr <- defineMemory chrSize
       let
         busPPU :: Bus
         busPPU a = if
           | a >= 0x0000 && a <= 0x1fff -> pure $ chr (fromIntegral a)
           | otherwise -> error $ printf "Mapper(busPPU) : address = $%04X" a
 
-      bankSelectOffset <- DefineRegister 0
+      bankSelectOffset <- defineRegister 0
 
       let
         onWrite v = do

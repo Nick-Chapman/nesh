@@ -2,7 +2,9 @@ module Start (main) where
 
 import CommandLine (Config(..),parseConfig)
 import Controller (makeKeys)
-import Framework (Eff(..),runEffect)
+
+import Framework (runEffect,effPrint)
+
 import Graphics qualified (main)
 import Mapper (initMapper)
 import PPU qualified (Graphics(..),makeHack)
@@ -27,7 +29,7 @@ main = do
             system = do
               hack <- PPU.makeHack
               let plot _ _ _ = pure () -- ignore plottng
-              let displayFrame n = Print (printf ".%s" (show n))
+              let displayFrame n = effPrint (printf ".%s" (show n))
               --let displayFrame _ = Print "."
               let graphics = PPU.Graphics { plot, displayFrame }
               keys <- Controller.makeKeys

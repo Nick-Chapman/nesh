@@ -5,7 +5,11 @@ import Control.Monad (when)
 import Controller (Keys(..),makeKeys,seeKeys)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-import Framework (Eff(..),runEffect,write)
+
+import Framework (Eff,runEffect,write
+                 ,halt,ioEff
+                 )
+
 import Mapper (Mapper)
 import PPU qualified (Graphics(..),Hack(..),makeHack)
 import Prelude hiding (read)
@@ -61,7 +65,7 @@ main config mapperE = do
     hack <- PPU.makeHack
     let
       onPlot :: CInt -> CInt -> Colour -> Eff ()
-      onPlot x0 y0 col = IO $ do
+      onPlot x0 y0 col = ioEff $ do
         let x = scale (x0 + border)
         let y = scale (y0 + border)
         SDL.rendererDrawColor renderer $= col
@@ -71,17 +75,17 @@ main config mapperE = do
       updateTitleBar frame = do
         let titleUpdateFrames = 12 -- 5 times per second
         when (fromIntegral frame `mod` titleUpdateFrames == 0) $ do
-          actualDuration :: Int <- IO $ durationSinceLastAsk
+          actualDuration :: Int <- ioEff $ durationSinceLastAsk
           let fpsAchieved :: Int = (titleUpdateFrames * 1000) `div` actualDuration
           keysState <- Controller.seeKeys keys
           let title = printf "nesh [%s] (%d) fps=[%d]" keysState actualDuration fpsAchieved
-          IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
+          ioEff (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
 
       displayFrame :: CInt -> Eff ()
       displayFrame frame = do
-        IO $ SDL.present renderer
-        IO $ greyRenderer
-        events <- IO $ SDL.pollEvents
+        ioEff $ SDL.present renderer
+        ioEff $ greyRenderer
+        events <- ioEff $ SDL.pollEvents
         mapM_ (processEvent keys hack) events
         updateTitleBar frame
         where
@@ -96,12 +100,12 @@ main config mapperE = do
 processEvent :: Keys -> PPU.Hack -> SDL.Event -> Eff ()
 processEvent keys hack e = do
   case e of
-    SDL.Event _t SDL.QuitEvent -> Halt
+    SDL.Event _t SDL.QuitEvent -> halt
     SDL.Event _ (SDL.KeyboardEvent ke) -> do
       let code = SDL.keysymKeycode (SDL.keyboardEventKeysym ke)
       let motion = SDL.keyboardEventKeyMotion ke
       let drives = write (motion == SDL.Pressed)
-      let quit = when (motion==SDL.Pressed) Halt
+      let quit = when (motion==SDL.Pressed) halt
       case code of
         SDL.KeycodeEscape -> quit
         SDL.KeycodeQ -> quit

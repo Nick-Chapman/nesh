@@ -8,7 +8,10 @@ import CommandLine(Config(..))
 import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
-import Framework (Eff(..),Ref(..),write,read,update,Bus)
+
+import Framework (Ref(..),write,read,update,Bus
+                 ,Eff,defineRegister,ioEff,halt,advancePPU)
+
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr)
@@ -93,7 +96,7 @@ maybeHalt Config{stop_at} State{cyc} = do
     Nothing -> pure ()
     Just max -> do
       cyc <- read cyc
-      when (cyc > max) Halt
+      when (cyc > max) halt
 
 ----------------------------------------------------------------------
 -- addressing modes
@@ -294,7 +297,7 @@ logCpuInstruction s@State{bus,ip} instruction mode addr = do
   let bytesS = intercalate " " (map (printf "%02X") bytes)
   let a = printf "%s  %s %s" (ljust 8 bytesS) (show instruction) (seeArgs (mode,args,addr))
   b <- seeState s
-  IO $ printf "%04X  %s%s\n" pc (ljust 42 a) b
+  ioEff $ printf "%04X  %s%s\n" pc (ljust 42 a) b
 
 ljust :: Int -> String -> String
 ljust n s = s <> take (max 0 (n - length s)) (repeat ' ')
@@ -337,13 +340,13 @@ data State = State
 
 mkState :: Ref Int -> Bus -> Eff State
 mkState extraCycles bus = do
-  ip <- DefineRegister 0
-  a <- DefineRegister 0
-  x <- DefineRegister 0
-  y <- DefineRegister 0
-  flags <- DefineRegister 0x24
-  sp <- DefineRegister 0xfd
-  cyc <- DefineRegister 0
+  ip <- defineRegister 0
+  a <- defineRegister 0
+  x <- defineRegister 0
+  y <- defineRegister 0
+  flags <- defineRegister 0x24
+  sp <- defineRegister 0xfd
+  cyc <- defineRegister 0
   pure $ State { ip, a, x, y, flags, sp, bus, extraCycles, cyc }
 
 seeState :: State -> Eff String
@@ -405,7 +408,7 @@ collectExtraCycles State{extraCycles} = do
 advanceCPU :: State -> Int -> Eff ()
 advanceCPU State{cyc} n = do
   update (+n) cyc
-  AdvancePPU (3*n) -- 3 ppu cycles to 1 cpu cycle
+  advancePPU (3*n) -- 3 ppu cycles to 1 cpu cycle
 
 ----------------------------------------------------------------------
 -- instructions

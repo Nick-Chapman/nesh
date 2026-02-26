@@ -1,18 +1,55 @@
 module Framework
-  ( Eff(..), runEffect
+  ( Eff, runEffect
+  , defineRegister,defineMemory,parallel,log,effError,effPrint,halt,advancePPU,ioEff
+
   , Ref(..), read, write, update, dummyRef, dummyRef_quiet
   , Bus
   ) where
 
-import Control.Monad (when,ap,liftM)
+import Control.Monad (when)
 import Data.IORef (newIORef,readIORef,writeIORef)
-import Data.List (insertBy)
-import Data.Ord (comparing)
 import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
-import Prelude hiding (read)
+import Prelude hiding (read,log)
 import System.IO (stdout,hFlush,hPutStr)
 import Text.Printf (printf)
 import Types (U8,Addr)
+
+import Effect (Eff,ioEff,now,halt,runEffect,parallel,advancePPU)
+
+
+defineRegister :: a -> Eff (Ref a)
+defineRegister v = ioEff $ do
+  r <- newIORef v
+  pure $ Ref { onRead = ioEff (readIORef r)
+             , onWrite = \v -> ioEff (writeIORef r v)
+             }
+
+defineMemory :: Int -> Eff (Int -> Ref U8)
+defineMemory size = ioEff $ do
+  mem :: IOArray Int U8 <- newIOArray (0,size - 1) 0
+  pure $ \addr -> do
+    let onRead = ioEff (readIOArray mem addr)
+    let onWrite v = ioEff (writeIOArray mem addr v)
+    Ref {onRead,onWrite} -- TODO: optimization(?) pre-build each Ref
+
+log :: String -> Eff ()
+log message = do
+  cycles <- now
+  ioEff $ putOut (printf "%6d: %s\n" cycles message)
+
+putOut :: String -> IO ()
+putOut s = do
+  hPutStr stdout s
+  hFlush stdout
+
+effPrint :: String -> Eff () -- raw flushed print
+effPrint message = ioEff $ do
+  putOut message
+
+effError :: String -> Eff a
+effError message = do
+  ioEff $ putOut (printf "ERROR: %s\n" message)
+  halt
 
 ----------------------------------------------------------------------
 -- Ref
@@ -36,10 +73,10 @@ dummyRef_maybeLog :: Bool -> String -> Addr -> Ref U8
 dummyRef_maybeLog doLog tag a =
   Ref { onRead = do
           -- TODO: make these Errors to stop emulation
-          when doLog $ Log (printf "TODO (%s): read: %04x" tag a)
+          when doLog $ log (printf "TODO (%s): read: %04x" tag a)
           pure 0
       , onWrite = \v -> do
-          when doLog $ Log (printf "TODO (%s): write: %04x = %02x" tag a v)
+          when doLog $ log (printf "TODO (%s): write: %04x = %02x" tag a v)
           pure ()
       }
 
@@ -48,112 +85,3 @@ dummyRef = dummyRef_maybeLog True
 
 dummyRef_quiet :: String -> Addr -> Ref U8
 dummyRef_quiet = dummyRef_maybeLog False
-
-----------------------------------------------------------------------
--- effect
-
-instance Functor Eff where fmap = liftM
-instance Applicative Eff where pure = Ret; (<*>) = ap
-instance Monad Eff where (>>=) = Bind
-
-data Eff a where
-  Ret :: a -> Eff a
-  Bind :: Eff a -> (a -> Eff b) -> Eff b
-  Halt :: Eff ()
-  IO :: IO a -> Eff a
-
-  Print :: String -> Eff () -- raw flushed print
-  Log :: String -> Eff () -- flushed/print showing #cycles & adding NL
-  Error :: String -> Eff a -- print and stop
-
-  DefineRegister :: a -> Eff (Ref a)
-  DefineMemory :: Int -> Eff (Int -> Ref U8)
-
-  Cycles :: Eff Int
-  Parallel :: Eff () -> Eff () -> Eff ()
-  AdvancePPU :: Int -> Eff () -- we synchronise everything on PPU ticks
-
-runEffect :: Eff () -> IO ()
-runEffect eff0 = loop s0 eff0 k0
-  where
-    s0 = State { cycles = 0, jobs = [] }
-    k0 () _ = error "effects should never end"
-
-    loop :: State -> Eff a -> (a -> State -> IO ()) -> IO ()
-    loop s eff k = case eff of
-      Ret a -> k a s
-      Bind m f -> loop s m $ \a s -> loop s (f a) k
-      Halt -> pure ()
-      IO io -> do x <- io; k x s
-
-      Print message -> do
-        putOut message
-        k () s
-
-      Log message -> do
-        let State {cycles} = s
-        putOut (printf "%6d: %s\n" cycles message)
-        k () s
-
-      Error message -> do
-        putOut (printf "ERROR: %s\n" message)
-        pure ()
-
-      DefineRegister v -> do
-        r <- newIORef v
-        k Ref { onRead = IO (readIORef r)
-              , onWrite = \v -> IO (writeIORef r v)
-              } s
-
-      DefineMemory size -> do
-        mem :: IOArray Int U8 <- newIOArray (0,size - 1) 0
-        let
-          f :: Int -> Ref U8
-          f addr = do
-            let onRead = IO (readIOArray mem addr)
-            let onWrite v = IO (writeIOArray mem addr v)
-            Ref {onRead,onWrite} -- TODO: optimization(?) pre-build each Ref
-        k f s
-
-      Cycles -> do
-        let State{cycles=now} = s
-        k now s
-
-      Parallel m1 m2 -> do
-        let State{cycles=now} = s
-        let j2 = Job { resumeTime = now, kunit = \() s -> loop s m2 k0 }
-        loop (pushJob s j2) m1 k
-      AdvancePPU n -> do
-        let State{cycles=now} = s
-        let now_n = now+n
-        let jobMe = Job { resumeTime = now_n, kunit = k }
-        resumeNext (pushJob s jobMe)
-
-    resumeNext :: State -> IO ()
-    resumeNext s1 = do
-      let State{jobs} = s1
-      case jobs of
-        [] -> error "resumeNext"
-        firstJob:restJobs -> do
-          let Job {resumeTime,kunit} = firstJob
-          let s2 = s1 { cycles = resumeTime, jobs = restJobs }
-          kunit () s2
-
-putOut :: String -> IO ()
-putOut s = do
-  hPutStr stdout s
-  hFlush stdout
-
-data State = State
-  { cycles :: Int
-  , jobs :: [Job] -- ordered by resumeTime
-  }
-
-data Job = Job
-  { resumeTime :: Int
-  , kunit :: () -> State -> IO ()
-  }
-
-pushJob :: State -> Job -> State
-pushJob s@State{jobs} job =
-  s { jobs = insertBy (comparing resumeTime) job jobs }
