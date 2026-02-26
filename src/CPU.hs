@@ -1,6 +1,5 @@
 module CPU
   ( State, mkState
-  , Config(..)
   , Interrupt(..), trigger
   , cpu
   ) where
