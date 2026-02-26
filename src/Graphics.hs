@@ -49,7 +49,7 @@ main config mapperE = do
 
   lastTicks <- SDL.ticks >>= newIORef
   let
-    durationSinceLastAsk :: IO Double
+    durationSinceLastAsk :: IO Int -- in milli seconds
     durationSinceLastAsk = do
       t1 <- readIORef lastTicks
       t2 <-  SDL.ticks
@@ -69,12 +69,12 @@ main config mapperE = do
         SDL.fillRect renderer (Just rect)
 
       updateTitleBar frame = do
-        let titleUpdateFrames = 10
-        when (frame `mod` titleUpdateFrames == 0) $ do
-          actualDuration <- IO $ durationSinceLastAsk
-          let fpsAchieved = fromIntegral titleUpdateFrames * 1000 / actualDuration
+        let titleUpdateFrames = 12 -- 5 times per second
+        when (fromIntegral frame `mod` titleUpdateFrames == 0) $ do
+          actualDuration :: Int <- IO $ durationSinceLastAsk
+          let fpsAchieved :: Int = (titleUpdateFrames * 1000) `div` actualDuration
           keysState <- Controller.seeKeys keys
-          let title = printf "nesh keys=[%s] fps=[%.0g]" keysState fpsAchieved
+          let title = printf "nesh [%s] (%d) fps=[%d]" keysState actualDuration fpsAchieved
           IO (SDL.windowTitle win $= Text.pack title) -- TODO: fixed width font
 
       displayFrame :: CInt -> Eff ()
