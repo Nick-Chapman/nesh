@@ -30,6 +30,7 @@ data Hack = Hack
   , noSprites :: Ref Bool
   }
 
+{-# INLINE makeHack #-}
 makeHack :: Eff Hack
 makeHack = do
   invertBehind <- defineRegister False
@@ -96,6 +97,7 @@ ppu Config{stop_frame} triggerNMI s g = loop 1 -- was 0
       write False spriteOverflow
       write False sprite0Hit
 
+    {-# INLINE visibleLine #-}
     visibleLine y = do
       renderScanLine s g y
 
@@ -113,6 +115,7 @@ data Graphics = Graphics
   , displayFrame :: CInt -> Eff ()
   }
 
+{-# INLINE renderScanLine #-}
 renderScanLine :: State -> Graphics -> CInt -> Eff ()
 renderScanLine s@State{hack} g y = do
   let Hack{noSprites,noBG} = hack
@@ -129,10 +132,13 @@ withoutBackground :: Graphics -> CInt -> SpritePixMap -> Eff ()
 withoutBackground Graphics{plot} y spritePixMap = do
   sequence_ [ do plot x y col | (x,(col,_)) <- Map.toList spritePixMap]
 
+{-# INLINE renderScanLineBG #-}
 renderScanLineBG :: State -> Graphics -> CInt -> SpritePixMap -> Eff ()
 renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
+  colour0 <- getColour s 0 0
   let State{hack,bus,status,control,scrollX,scrollY} = s
   let Hack{invertBehind} = hack
+  invertBehind <- read invertBehind
   let Status{sprite0Hit} = status
   Control{nameTableId=ntBase, backgroundPatternTableId} <- read control
   scrollX <- read scrollX
@@ -141,6 +147,7 @@ renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
   let nameTableY = scrolledY `mod` 240
   let tileInsideY = nameTableY `mod` 8
   let
+    {-# INLINE loop #-}
     loop pixelX = if pixelX > 255 then pure () else do
       let scrolledX = fromIntegral scrollX + pixelX
       let nameTableX = scrolledX `mod` 256
@@ -158,13 +165,12 @@ renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
       let tileIndex = fromIntegral (tileY * 32 + tileX)
       tileId :: TileId <- bus (nameTableAddr + tileIndex) >>= read
       tile <- makeTile s backgroundPatternTableId tileId tileInsideY
-      paletteId <- getBackgroundPaletteId s nameTableId nameTableX nameTableY
+      paletteId <- getBackgroundPaletteId s nameTableAddr nameTableX nameTableY
       forM_ [0::U3 ..tilePixels-1] $ \xx -> do
         let colourIndex = getColourIndex tile (tileStartX + xx)
         let bgIsOpaque = colourIndex /= 0
-        bgCol <- case colourIndex of 0 -> getColour s 0 0
+        bgCol <- case colourIndex of 0 -> pure colour0
                                      _ -> getColour s paletteId colourIndex
-        invertBehind <- read invertBehind
         let optSpritePixel = Map.lookup (pixelX + xx) spritePixMap
         let
           resolveddCol =
@@ -180,11 +186,11 @@ renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
       loop (pixelX + tilePixels)
   loop 0
 
-getBackgroundPaletteId :: State -> NameTableId -> CInt -> CInt -> Eff PaletteId
-getBackgroundPaletteId State{bus} nameTableId x y = do
+{-# INLINE getBackgroundPaletteId #-}
+getBackgroundPaletteId :: State -> Addr -> CInt -> CInt -> Eff PaletteId
+getBackgroundPaletteId State{bus} nameTableAddr x y = do
   let xx = x `div` 32
   let yy = y `div` 32
-  let nameTableAddr = 0x2000 + fromIntegral (nameTableId * 1024)
   let atableStart = nameTableAddr + 960
   let atableAddr :: Addr = atableStart + fromIntegral (xx + yy * 8)
   atableByte <- bus atableAddr >>= read
@@ -225,6 +231,7 @@ data Sprite = Sprite
   , flipY :: Bool
   }
 
+{-# INLINE createSprite #-}
 createSprite :: State -> SpriteId -> Eff Sprite
 createSprite State{control,oamRam} id = do
   Control{sprite8x8PatternTableId,spriteSize=is8x16} <- read control
@@ -288,6 +295,7 @@ data Tile = TileX
   , hiRow :: U8
   }
 
+-- {-# INLINE makeTile #-}
 makeTile :: State -> PatternTableId -> TileId -> CInt -> Eff Tile
 makeTile State{bus} patternTableId tileId y = do
   let tableAddr = if patternTableId then 0x1000 else 0x0000
@@ -307,6 +315,7 @@ getColourIndex TileX{loRow,hiRow} x = do
   let hi = hiRow `testBit` i
   (if hi then 2 else 0) + (if lo then 1 else 0)
 
+{-# INLINE getColour #-}
 getColour :: State -> PaletteId -> ColourIndex -> Eff Colour
 getColour State{bus} paletteId colourIndex = do
   let offset = fromIntegral (paletteId * 4 + colourIndex)
@@ -488,6 +497,7 @@ data State = State
   , hack :: Hack
   }
 
+{-# INLINE initState #-}
 initState :: Bus -> Hack -> Ref Int -> Eff State
 initState bus hack extraCpuCycles =  do
   control <- defineRegister (byte2control 0)
@@ -534,6 +544,7 @@ data Status = Status
   , isInVBlankInterval :: Ref Bool
   }
 
+{-# INLINE initStatus #-}
 initStatus :: Eff Status
 initStatus = do
   spriteOverflow <- defineRegister False

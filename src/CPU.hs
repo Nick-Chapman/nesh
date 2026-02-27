@@ -405,6 +405,7 @@ collectExtraCycles State{extraCycles} = do
   write 0 extraCycles
   pure n
 
+{-# INLINE advanceCPU #-}
 advanceCPU :: State -> Int -> Eff ()
 advanceCPU State{cyc} n = do
   update (+n) cyc

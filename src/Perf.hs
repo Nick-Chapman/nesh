@@ -34,7 +34,7 @@ explorePerf config mapperE = do
           count <- read count
           smudge <- read smudge
           effPrint $ printf "frame=%s, #plots=%d, smudge=%s \n" (show n) count (show smudge)
-          when (n==12) $ halt -- should take 1/5s, 200ms
+          when (n==2) $ halt -- should take 1/5s, 200ms
 
       let graphics = PPU.Graphics { plot, displayFrame }
 

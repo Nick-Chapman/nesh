@@ -14,7 +14,7 @@ ghc-options:
   echo -Werror >> $out
   echo -Wall >> $out
   echo -Wno-name-shadowing >> $out
-  echo -O >> $out
+  echo -O2 >> $out
 # -O == -O1. Quicker that -O2 for the gradientCol example.
 
 default-extensions:

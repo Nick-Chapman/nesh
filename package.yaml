@@ -35,6 +35,9 @@ ghc-options:
 - -Wno-name-shadowing
 # Default optimisation is -O == -O1
 # And is quicker that -O2 for the gradientCol example
+- -O2
+- -fexpose-all-unfoldings
+- -fspecialize-aggressively
 
 library:
   source-dirs: src

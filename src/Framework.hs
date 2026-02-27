@@ -8,7 +8,7 @@ module Framework
 
 import Control.Monad (when)
 import Data.IORef (newIORef,readIORef,writeIORef)
-import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
+--import GHC.IOArray (IOArray,newIOArray,writeIOArray,readIOArray)
 import Prelude hiding (read,log)
 import System.IO (stdout,hFlush,hPutStr)
 import Text.Printf (printf)
@@ -16,7 +16,10 @@ import Types (U8,Addr)
 
 import Effect (Eff,ioEff,now,halt,runEffect,parallel,advancePPU)
 
+import Data.Array (Array,listArray,(!))
 
+
+{-# INLINE defineRegister #-}
 defineRegister :: a -> Eff (Ref a)
 defineRegister v = ioEff $ do
   r <- newIORef v
@@ -24,6 +27,8 @@ defineRegister v = ioEff $ do
              , onWrite = \v -> ioEff (writeIORef r v)
              }
 
+{-
+{-# INLINE defineMemory #-}
 defineMemory :: Int -> Eff (Int -> Ref U8)
 defineMemory size = ioEff $ do
   mem :: IOArray Int U8 <- newIOArray (0,size - 1) 0
@@ -31,6 +36,15 @@ defineMemory size = ioEff $ do
     let onRead = ioEff (readIOArray mem addr)
     let onWrite v = ioEff (writeIOArray mem addr v)
     Ref {onRead,onWrite} -- TODO: optimization(?) pre-build each Ref
+-}
+
+{-# INLINE defineMemory #-}
+defineMemory :: Int -> Eff (Int -> Ref U8)
+defineMemory size = do
+  rs <- sequence (replicate size (defineRegister 0))
+  let a :: Array Int (Ref U8) = listArray (0, size - 1) rs
+  pure $ \i -> do
+    a ! i
 
 log :: String -> Eff ()
 log message = do
@@ -59,9 +73,11 @@ data Ref a = Ref { onRead :: Eff a, onWrite :: a -> Eff () }
 read :: Ref a -> Eff a
 read Ref{onRead} = onRead
 
+{-# INLINE write #-}
 write :: a -> Ref a -> Eff ()
 write v Ref{onWrite} = onWrite v
 
+{-# INLINE update #-}
 update :: (a -> a) -> Ref a -> Eff ()
 update f r = do
   v <- read r
