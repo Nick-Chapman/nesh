@@ -1,0 +1,6 @@
+#!/bin/bash
+
+rm -f main.exe.prof
+stack run --profile -- ~/nes/castle.nes --perf +RTS -p -RTS
+cat main.exe.prof | head -20
+rm main.exe.prof
