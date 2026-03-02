@@ -17,6 +17,7 @@ dependencies:
 - text
 
 default-extensions:
+- BangPatterns
 - DuplicateRecordFields
 - GADTs
 - GeneralizedNewtypeDeriving
