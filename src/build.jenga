@@ -15,8 +15,6 @@ ghc-options:
   echo -Wall >> $out
   echo -Wno-name-shadowing >> $out
   echo -O2 >> $out # Default is -O0
-  echo -fexpose-all-unfoldings >> $out
-  echo -fspecialize-aggressively >> $out
 
 default-extensions:
   echo LambdaCase >> $out

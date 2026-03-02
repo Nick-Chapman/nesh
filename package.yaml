@@ -35,8 +35,6 @@ ghc-options:
 - -Wno-name-shadowing
 # Default optimisation is -O == -O1
 - -O2
-- -fexpose-all-unfoldings
-- -fspecialize-aggressively
 
 library:
   source-dirs: src
