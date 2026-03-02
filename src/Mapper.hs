@@ -103,7 +103,7 @@ initMapper bs = do
 
       let
         onWrite v = do
-          when (fromIntegral v > x) $ error (printf "Mapper2: bank select too-big: %d" v)
+          --when (fromIntegral v > x) $ error (printf "Mapper2: bank select too-big: %d > %d" v x)
           write (fromIntegral v * prgSize) bankSelectOffset
           pure ()
 
