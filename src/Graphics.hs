@@ -5,7 +5,7 @@ import Control.Monad (when)
 import Controller (Keys(..),makeKeys,seeKeys)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-import Framework (Eff,runEffect,write,halt,ioEff)
+import Framework (Eff,runEffect,read,write,halt,ioEff)
 import Mapper (Mapper)
 import PPU qualified (Graphics(..),Hack(..),makeHack)
 import Prelude hiding (read)
@@ -58,15 +58,18 @@ main config mapperE = do
 
   runEffect $ do
     keys <- Controller.makeKeys
-    hack <- PPU.makeHack
+    hack@PPU.Hack{noSDL} <- PPU.makeHack
     let
       onPlot :: CInt -> CInt -> Colour -> Eff ()
-      onPlot x0 y0 col = ioEff $ do
-        let x = scale (x0 + border)
-        let y = scale (y0 + border)
-        SDL.rendererDrawColor renderer $= col
-        let rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
-        SDL.fillRect renderer (Just rect)
+      onPlot x0 y0 col = do
+        let !x = scale (x0 + border)
+        let !y = scale (y0 + border)
+        let !rect = SDL.Rectangle (SDL.P (V2 x y)) (V2 sf sf)
+        read noSDL >>= \case
+          True -> pure ()
+          False -> ioEff $ do
+            SDL.rendererDrawColor renderer $= col
+            SDL.fillRect renderer (Just rect)
 
       updateTitleBar frame = do
         let titleUpdateFrames = 12 -- 5 times per second
@@ -108,6 +111,7 @@ processEvent keys hack e = do
 
         -- Exploration/hacking
         --SDL.KeycodeTab -> drives invertBehind -- for lolz
+        SDL.KeycodeF1 -> drives noSDL
         SDL.KeycodeTab -> drives noCPU
         SDL.KeycodeLShift -> drives noSprites
         SDL.KeycodeLCtrl -> drives noBG
@@ -126,5 +130,5 @@ processEvent keys hack e = do
     _ -> pure ()
 
     where
-      PPU.Hack{invertBehind=_,noCPU,noBG,noSprites} = hack
+      PPU.Hack{invertBehind=_,noSDL,noCPU,noBG,noSprites} = hack
       Keys{start,select,buttonA,buttonB,left,right,up,down} = keys

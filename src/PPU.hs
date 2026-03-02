@@ -27,6 +27,7 @@ data Hack = Hack
   , noCPU :: Ref Bool
   , noBG :: Ref Bool
   , noSprites :: Ref Bool
+  , noSDL :: Ref Bool
   }
 
 makeHack :: Eff Hack
@@ -35,6 +36,7 @@ makeHack = do
   noCPU <- defineRegister False
   noBG <- defineRegister False
   noSprites <- defineRegister False
+  noSDL <- defineRegister False
   pure Hack {..}
 
 ----------------------------------------------------------------------
