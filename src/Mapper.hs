@@ -22,7 +22,6 @@ data Mapper = Mapper
 noWrite :: String -> U8 -> Eff ()
 noWrite tag = \_ -> effError (printf "unexpected write to Rom: %s" tag)
 
-{-# INLINE initMapper #-}
 initMapper :: [U8] -> Eff Mapper
 initMapper bs = do
 

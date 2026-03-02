@@ -8,28 +8,21 @@ import Control.Monad (ap,liftM)
 import Data.List (insertBy)
 import Data.Ord (comparing)
 
-halt :: Eff a
-now :: Eff Int
-advancePPU :: Int -> Eff ()
-ioEff :: IO a -> Eff a
-parallel :: Eff () -> Eff () -> Eff ()
+{-# INLINE ret #-}
+{-# INLINE bind #-}
+{-# INLINE ioEff #-}
+
 ret :: a -> Eff a
 bind :: Eff a -> (a -> Eff b) -> Eff b
+halt :: Eff a
+ioEff :: IO a -> Eff a
+now :: Eff Int
+advancePPU :: Int -> Eff ()
+parallel :: Eff () -> Eff () -> Eff ()
 
-instance Functor Eff where
-  {-# INLINE fmap #-}
-  fmap = liftM
-
-instance Applicative Eff where
-  {-# INLINE pure #-}
-  pure = ret
-  {-# INLINE (<*>) #-}
-  (<*>) = ap
-
-instance Monad Eff where
-  {-# INLINE (>>=) #-}
-  (>>=) = bind
-
+instance Functor Eff where fmap = liftM
+instance Applicative Eff where pure = ret; (<*>) = ap
+instance Monad Eff where (>>=) = bind
 
 data State = State
   { cycles :: Int
@@ -53,14 +46,10 @@ runEffect m = loop m s0 k0
 
 newtype Eff a = Eff { loop :: State -> (a -> State -> IO ()) -> IO () }
 
-{-# INLINE ret #-}
-{-# INLINE bind #-}
-{-# INLINE ioEff #-}
-
 ret a = Eff $ \s k -> k a s
 bind m f = Eff $ \s k -> loop m s (\a s -> loop (f a) s k)
-ioEff io = Eff $ \s k -> do x <- io; k x s
 halt = Eff $ \_ _ -> pure ()
+ioEff io = Eff $ \s k -> do x <- io; k x s
 now = Eff $ \s@State{cycles} k -> k cycles s
 
 parallel m1 m2 = Eff $ \s k -> do

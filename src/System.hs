@@ -13,7 +13,6 @@ import Text.Printf (printf)
 import Types (Mirroring(..))
 import qualified PPU (State,registers,oamDMA)
 
-{-# INLINE makeSystem #-}
 makeSystem  :: Config -> Eff Mapper -> PPU.Hack -> Keys -> PPU.Graphics -> Eff ()
 makeSystem config mapperE hack keys graphics = do
   controllerState <- Controller.initState keys
@@ -28,7 +27,6 @@ makeSystem config mapperE hack keys graphics = do
   let ppu = PPU.ppu config triggerNMI ppuState graphics
   parallel cpu ppu
 
-{-# INLINE makeCpuBus #-}
 makeCpuBus :: Mapper -> PPU.State -> Controller.State -> Eff Bus
 makeCpuBus mapper ppuState controllerState = do
   wram <- defineMemory 2048
@@ -60,7 +58,6 @@ makeCpuBus mapper ppuState controllerState = do
 
   pure cpuBus
 
-{-# INLINE makePpuBus #-}
 makePpuBus :: Mapper -> Eff Bus
 makePpuBus mapper = do
 
