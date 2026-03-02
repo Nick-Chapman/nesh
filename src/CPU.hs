@@ -8,10 +8,7 @@ import CommandLine(Config(..))
 import Control.Monad (when)
 import Data.Bits (testBit,(.&.),(.|.),xor,setBit,clearBit,shiftL,shiftR)
 import Data.List (intercalate)
-
-import Framework (Ref(..),write,read,update,Bus
-                 ,Eff,defineRegister,ioEff,halt,advancePPU)
-
+import Framework (Ref(..),write,read,update,Bus,Eff,defineRegister,ioEff,halt,advancePPU)
 import Prelude hiding (read,and,compare)
 import Text.Printf (printf)
 import Types (U8,Addr,HL(..),makeAddr,splitAddr)

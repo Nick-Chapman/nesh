@@ -1,16 +1,16 @@
 module Perf (explorePerf) where
 
-import Control.Monad (when)
 import CommandLine (Config(..))
+import Control.Monad (when)
 import Controller (makeKeys)
 import Framework (Eff,runEffect,update,read,write,defineRegister,effPrint,halt)
 import Mapper (Mapper)
 import PPU qualified (Graphics(..),makeHack,Hack(..))
+import Prelude hiding (read)
 import System (makeSystem)
 import Text.Printf (printf)
-import Prelude hiding (read)
-import Types (Colour)
 import Timing (timed)
+import Types (Colour)
 
 mergeColour :: Colour -> Colour -> Colour
 mergeColour a b = a+b

@@ -5,11 +5,7 @@ import Control.Monad (when)
 import Controller (Keys(..),makeKeys,seeKeys)
 import Data.IORef (newIORef,readIORef,writeIORef)
 import Foreign.C.Types (CInt)
-
-import Framework (Eff,runEffect,write
-                 ,halt,ioEff
-                 )
-
+import Framework (Eff,runEffect,write,halt,ioEff)
 import Mapper (Mapper)
 import PPU qualified (Graphics(..),Hack(..),makeHack)
 import Prelude hiding (read)

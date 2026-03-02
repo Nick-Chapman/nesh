@@ -2,17 +2,15 @@ module Start (main) where
 
 import CommandLine (Config(..),parseConfig)
 import Controller (makeKeys)
-
 import Framework (runEffect,effPrint)
-
 import Graphics qualified (main)
 import Mapper (initMapper)
 import PPU qualified (Graphics(..),makeHack)
+import Perf (explorePerf)
 import System (makeSystem)
 import System.Environment (getArgs)
 import Text.Printf (printf)
 import qualified Data.ByteString as BS (readFile,unpack)
-import Perf (explorePerf)
 
 main :: IO ()
 main = do

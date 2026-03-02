@@ -4,15 +4,12 @@ module Mapper
   , mirroring
   ) where
 
-import Prelude hiding (read,log)
 import Control.Monad (when)
 import Data.Array (Array,listArray,(!))
 import Data.Bits ((.&.),(.|.),shiftR,testBit)
 import Data.ByteString.Internal (w2c)
-
-import Framework (Ref(..),Bus,read,write
-                 ,Eff,defineRegister,defineMemory,effError,log)
-
+import Framework (Ref(..),Bus,read,write,Eff,defineRegister,defineMemory,effError,log)
+import Prelude hiding (read,log)
 import Text.Printf (printf)
 import Types (U8,Mirroring(..))
 

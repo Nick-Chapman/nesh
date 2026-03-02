@@ -5,20 +5,19 @@ module PPU
   , Graphics(..)
   ) where
 
+import CommandLine (Config(..))
 import Control.Monad (when,forM_)
 import Data.Array (Array,(!),listArray)
 import Data.Bits (testBit,(.&.),(.|.),xor,shiftR)
+import Data.Map (Map)
+import Data.Map qualified as Map
 import Data.Word (Word32)
 import Foreign.C.Types (CInt)
-import Framework (Ref(..),read,write,update,Bus,dummyRef_quiet
-                 ,Eff,defineRegister,defineMemory,effError,halt,advancePPU)
+import Framework (Ref(..),read,write,update,Bus,dummyRef_quiet,Eff,defineRegister,defineMemory,effError,halt,advancePPU)
 import Prelude hiding (read)
 import SDL (V4(..))
 import Text.Printf (printf)
 import Types (Addr,U8,Colour,HL(..),makeAddr,splitAddr)
-import Data.Map (Map)
-import Data.Map qualified as Map
-import CommandLine (Config(..))
 
 ----------------------------------------------------------------------
 -- PPU Hack

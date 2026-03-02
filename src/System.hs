@@ -4,17 +4,14 @@ import CPU qualified (cpu,mkState,trigger,Interrupt(NMI))
 import CommandLine (Config(..))
 import Control.Monad (when)
 import Controller (Keys,State,initState,makeRegister)
-
-import Framework (Bus,dummyRef,dummyRef_quiet,
-                  Eff,defineRegister,defineMemory,log,parallel)
-
+import Framework (Bus,dummyRef,dummyRef_quiet,Eff,defineRegister,defineMemory,log,parallel)
 import Mapper (Mapper)
 import Mapper qualified (busCPU,busPPU,mirroring)
 import PPU qualified (ppu,initState,Graphics,Hack)
+import Prelude hiding (log)
 import Text.Printf (printf)
 import Types (Mirroring(..))
 import qualified PPU (State,registers,oamDMA)
-import Prelude hiding (log)
 
 {-# INLINE makeSystem #-}
 makeSystem  :: Config -> Eff Mapper -> PPU.Hack -> Keys -> PPU.Graphics -> Eff ()

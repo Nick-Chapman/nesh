@@ -4,7 +4,7 @@ module Controller
 
 import Control.Monad (when)
 import Data.Bits (testBit)
-import Framework --(Eff(..),Ref(..),read,write)
+import Framework (Eff,defineRegister,Ref(..),read,write)
 import Prelude hiding (read)
 import Types (U8)
 
