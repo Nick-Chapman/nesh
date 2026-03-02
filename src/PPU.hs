@@ -13,8 +13,8 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Word (Word32)
 import Foreign.C.Types (CInt)
-import Framework (Ref(..),read,write,update,Bus,dummyRef_quiet,Eff,defineRegister,defineMemory,effError,halt,advancePPU)
-import Prelude hiding (read)
+import Framework (Ref(..),read,write,update,Bus,Eff,defineRegister,defineMemory,effError,halt,advancePPU)
+import Prelude hiding (read,log)
 import SDL (V4(..))
 import Text.Printf (printf)
 import Types (Addr,U8,Colour,HL(..),makeAddr,splitAddr)
@@ -91,18 +91,28 @@ ppu Config{stop_frame} triggerNMI s g = loop 1 -- was 0
         False -> advancePPU 341
 
     preVisibleLine = do
-      write False isInVBlankInterval
-      write False spriteOverflow
-      write False sprite0Hit
+      renderingIsEnabled s >>= \case
+        False -> pure ()
+        True -> do
+          write False isInVBlankInterval
+          write False spriteOverflow
+          write False sprite0Hit
 
     visibleLine y = do
       renderScanLine s g y
+      -- later we will have logic here conditional on renderingIsEnabled
 
     vblankLine = do
       write True isInVBlankInterval
       Control{generateNMIOnVBlank=gen} <- read control
       noCPU <- read noCPU
       when (not noCPU && gen) $ triggerNMI
+
+
+renderingIsEnabled :: State -> Eff Bool
+renderingIsEnabled State{mask} = do
+  Mask{showSprites,showBackground} <- read mask
+  pure (showSprites || showBackground)
 
 ----------------------------------------------------------------------
 -- Graphics
@@ -113,12 +123,14 @@ data Graphics = Graphics
   }
 
 renderScanLine :: State -> Graphics -> CInt -> Eff ()
-renderScanLine s@State{hack} g y = do
-  let Hack{noSprites,noBG} = hack
+renderScanLine s@State{hack,mask} g y = do
+  let Hack{noSprites,noBG} = hack -- bound to a key for testing
+  Mask{showSprites} <- read mask -- real PPU specified behaviour
   spritePixMap <- do
-    read noSprites >>= \case
-      True -> pure Map.empty
-      False -> renderScanLineSprites s y
+    if not showSprites then pure Map.empty else do
+      read noSprites >>= \case
+        True -> pure Map.empty
+        False -> renderScanLineSprites s y
 
   read noBG >>= \case
     True -> withoutBackground   g y spritePixMap
@@ -131,53 +143,72 @@ withoutBackground Graphics{plot} y spritePixMap = do
 renderScanLineBG :: State -> Graphics -> CInt -> SpritePixMap -> Eff ()
 renderScanLineBG s Graphics{plot} pixelY spritePixMap = do
   colour0 <- getColour s 0 0
-  let State{hack,bus,status,control,scrollX,scrollY} = s
+  let State{hack,bus,status,control,mask,scrollX,scrollY} = s
   let Hack{invertBehind} = hack
   invertBehind <- read invertBehind
   let Status{sprite0Hit} = status
   Control{nameTableId=ntBase, backgroundPatternTableId} <- read control
+  Mask{showBackground,showBackgroundInFirst8Pixels,showSpritesInFirst8Pixels} <- read mask
+
+  let
+    resolveWithSprite fineX bgIsOpaque bgCol = do
+      let
+        optSpritePixel =
+          if fineX < 8 && not showSpritesInFirst8Pixels then Nothing else
+            Map.lookup fineX spritePixMap
+      let
+        resolveddCol =
+          case optSpritePixel of
+            Nothing -> bgCol
+            Just (col,Sprite{behindBG}) -> do
+              if (invertBehind `xor` behindBG) && bgIsOpaque then bgCol else col
+      plot fineX pixelY resolveddCol
+      case optSpritePixel of
+        Nothing -> pure ()
+        Just (_,Sprite{id}) -> do
+          when (id==0 && bgIsOpaque) $ write True sprite0Hit
+
   scrollX <- read scrollX
   scrollY <- read scrollY
   let scrolledY = fromIntegral scrollY + pixelY
   let nameTableY = scrolledY `mod` 240
   let tileInsideY = nameTableY `mod` 8
+
   let
     loop pixelX = if pixelX > 255 then pure () else do
-      let scrolledX = fromIntegral scrollX + pixelX
-      let nameTableX = scrolledX `mod` 256
-      let tileStartX = nameTableX `mod` 8
-      let tilePixels = min (8 - tileStartX) (256 - pixelX) -- emudevz bug: nameTableX not pixelX
-      let
-        nameTableId =
-          (ntBase +
-           (if scrolledX >= 256 then 1 else 0) +
-           (if scrolledY >= 240 then 2 else 0)
-          ) `mod` 4
-      let nameTableAddr = 0x2000 + fromIntegral (nameTableId * 1024)
-      let tileX = nameTableX `div` 8
-      let tileY = nameTableY `div` 8
-      let tileIndex = fromIntegral (tileY * 32 + tileX)
-      tileId :: TileId <- bus (nameTableAddr + tileIndex) >>= read
-      tile <- makeTile s backgroundPatternTableId tileId tileInsideY
-      paletteId <- getBackgroundPaletteId s nameTableAddr nameTableX nameTableY
-      forM_ [0::U3 ..tilePixels-1] $ \xx -> do
-        let colourIndex = getColourIndex tile (tileStartX + xx)
-        let bgIsOpaque = colourIndex /= 0
-        bgCol <- case colourIndex of 0 -> pure colour0
-                                     _ -> getColour s paletteId colourIndex
-        let optSpritePixel = Map.lookup (pixelX + xx) spritePixMap
-        let
-          resolveddCol =
-            case optSpritePixel of
-              Nothing -> bgCol
-              Just (col,Sprite{behindBG}) -> do
-                if (invertBehind `xor` behindBG) && bgIsOpaque then bgCol else col
-        plot (pixelX + xx) pixelY resolveddCol
-        case optSpritePixel of
-          Nothing -> pure ()
-          Just (_,Sprite{id}) -> do
-            when (id==0 && bgIsOpaque) $ write True sprite0Hit
-      loop (pixelX + tilePixels)
+
+      case (not showBackground || (not showBackgroundInFirst8Pixels && pixelX < 8)) of
+        True -> do
+          let bgCol = colour0
+          let bgIsOpaque = True
+          resolveWithSprite pixelX bgIsOpaque bgCol
+          loop (pixelX+1)
+        False -> do
+          let scrolledX = fromIntegral scrollX + pixelX
+          let nameTableX = scrolledX `mod` 256
+          let tileStartX = nameTableX `mod` 8
+          let tilePixels = min (8 - tileStartX) (256 - pixelX) -- emudevz bug: nameTableX not pixelX
+          let
+            nameTableId =
+              (ntBase +
+               (if scrolledX >= 256 then 1 else 0) +
+               (if scrolledY >= 240 then 2 else 0)
+              ) `mod` 4
+          let nameTableAddr = 0x2000 + fromIntegral (nameTableId * 1024)
+          let tileX = nameTableX `div` 8
+          let tileY = nameTableY `div` 8
+          let tileIndex = fromIntegral (tileY * 32 + tileX)
+          tileId :: TileId <- bus (nameTableAddr + tileIndex) >>= read
+          tile <- makeTile s backgroundPatternTableId tileId tileInsideY
+          paletteId <- getBackgroundPaletteId s nameTableAddr nameTableX nameTableY
+          forM_ [0::U3 ..tilePixels-1] $ \xx -> do
+            let colourIndex = getColourIndex tile (tileStartX + xx)
+            let bgIsOpaque = colourIndex /= 0
+            bgCol <- case colourIndex of 0 -> pure colour0
+                                         _ -> getColour s paletteId colourIndex
+            resolveWithSprite (pixelX+xx) bgIsOpaque bgCol
+          loop (pixelX + tilePixels)
+
   loop 0
 
 getBackgroundPaletteId :: State -> Addr -> CInt -> CInt -> Eff PaletteId
@@ -351,7 +382,7 @@ registers s = do
   \a -> pure $ do
     if
       | a == 0x2000 -> ppuCtrl s
-      | a == 0x2001 -> dummyRef_quiet "ppuMask" a
+      | a == 0x2001 -> ppuMask s
       | a == 0x2002 -> ppuStatus s
       | a == 0x2003 -> oamAddr s
       | a == 0x2004 -> oamData s
@@ -377,6 +408,12 @@ ppuCtrl State{control} = Ref {onRead,onWrite}
   where
     onRead = effError "ppuCtrl: read"
     onWrite v = write (byte2control v) control
+
+ppuMask :: State -> Ref U8
+ppuMask State{mask} = Ref {onRead,onWrite}
+  where
+    onRead = effError "ppuMask: read"
+    onWrite v = write (byte2mask v) mask
 
 ppuStatus :: State -> Ref U8
 ppuStatus State{status,latch} = Ref {onRead,onWrite}
@@ -475,6 +512,7 @@ oamDMA State{oamRam,extraCpuCycles} cpuBus = Ref {onRead,onWrite}
 data State = State
   { bus :: Bus
   , control :: Ref Control
+  , mask :: Ref Mask
   , status :: Status
   , latch :: Ref Bool
   , addr :: Ref Addr
@@ -490,6 +528,7 @@ data State = State
 initState :: Bus -> Hack -> Ref Int -> Eff State
 initState bus hack extraCpuCycles =  do
   control <- defineRegister (byte2control 0)
+  mask <- defineRegister (byte2mask 0)
   status <- initStatus
   latch <- defineRegister False
   addr <- defineRegister 0
@@ -522,6 +561,24 @@ byte2control v = Control
   , spriteSize = v `testBit` 5
   -- Nothing in bit position 6
   , generateNMIOnVBlank = v `testBit` 7
+  }
+
+----------------------------------------------------------------------
+-- MaskByte
+
+data Mask = Mask
+  { showSprites :: Bool
+  , showBackground :: Bool
+  , showSpritesInFirst8Pixels :: Bool
+  , showBackgroundInFirst8Pixels :: Bool
+  }
+
+byte2mask :: U8 -> Mask
+byte2mask v = Mask
+  { showSprites = v `testBit` 4
+  , showBackground = v `testBit` 3
+  , showSpritesInFirst8Pixels = v `testBit` 2
+  , showBackgroundInFirst8Pixels = v `testBit` 1
   }
 
 ----------------------------------------------------------------------
