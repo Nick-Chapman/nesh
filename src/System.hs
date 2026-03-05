@@ -38,7 +38,9 @@ makeCpuBus mapper ppuState controllerState = do
       when (a == 0xfffe) $ log "Reading from IRQ/BRK interrupt vector"
       if
         | a <= 0x07ff -> pure $ wram (fromIntegral a)
-        | a >= 0x0800 && a <= 0x0fff -> pure $ wram (fromIntegral a - 0x800)
+        | a >= 0x0800 && a <= 0x0fff -> pure $ wram (fromIntegral a - 0x800) -- vram mirror 1
+        | a >= 0x1000 && a <= 0x1fff -> pure $ dummyRef "CPU[$1000..$1fff](vram mirrors 2/3)" a
+
         | a >= 0x2000 && a <= 0x2007 -> PPU.registers ppuState a
 
         -- The next range should be mirrors for the PPU registers. Referenced by ice game.

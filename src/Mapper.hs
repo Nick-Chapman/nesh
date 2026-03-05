@@ -8,7 +8,7 @@ import Control.Monad (when)
 import Data.Array (Array,listArray,(!))
 import Data.Bits ((.&.),(.|.),shiftR,testBit)
 import Data.ByteString.Internal (w2c)
-import Framework (Ref(..),Bus,read,write,Eff,defineRegister,defineMemory,effError,log)
+import Framework (Ref(..),Bus,read,write,Eff,defineRegister,defineMemory,log)
 import Prelude hiding (read,log)
 import Text.Printf (printf)
 import Types (U8,Mirroring(..))
@@ -20,7 +20,7 @@ data Mapper = Mapper
   }
 
 noWrite :: String -> U8 -> Eff ()
-noWrite tag = \_ -> effError (printf "unexpected write to Rom: %s" tag)
+noWrite tag = \_ -> log (printf "unexpected write to Rom: %s" tag)
 
 initMapper :: [U8] -> Eff Mapper
 initMapper bs = do

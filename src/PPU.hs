@@ -13,7 +13,7 @@ import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Word (Word32)
 import Foreign.C.Types (CInt)
-import Framework (Ref(..),read,write,update,Bus,Eff,defineRegister,defineMemory,effError,halt,advancePPU)
+import Framework (Ref(..),read,write,update,Bus,Eff,defineRegister,defineMemory,log,effError,halt,advancePPU)
 import Prelude hiding (read,log)
 import SDL (V4(..))
 import Text.Printf (printf)
@@ -408,7 +408,7 @@ ppuScroll State{scrollX,scrollY,latch} = Ref {onRead,onWrite}
 ppuCtrl :: State -> Ref U8
 ppuCtrl State{control} = Ref {onRead,onWrite}
   where
-    onRead = effError "ppuCtrl: read"
+    onRead = do log "ppuCtrl: read"; pure 0
     onWrite v = write (byte2control v) control
 
 ppuMask :: State -> Ref U8
@@ -428,7 +428,7 @@ ppuStatus State{status,latch} = Ref {onRead,onWrite}
       write False latch
       pure v
     onWrite v = do
-      effError $ printf "ppuStatus: write %02x" v
+      log $ printf "ppuStatus: write %02x" v
 
 ppuAddr :: State -> Ref U8
 ppuAddr State{addr,latch} = Ref {onRead,onWrite}
