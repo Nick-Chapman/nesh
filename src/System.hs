@@ -39,7 +39,8 @@ makeCpuBus mapper ppuState controllerState = do
       if
         | a <= 0x07ff -> pure $ wram (fromIntegral a)
         | a >= 0x0800 && a <= 0x0fff -> pure $ wram (fromIntegral a - 0x800) -- vram mirror 1
-        | a >= 0x1000 && a <= 0x1fff -> pure $ dummyRef "CPU[$1000..$1fff](vram mirrors 2/3)" a
+        | a >= 0x1000 && a <= 0x17ff -> pure $ wram (fromIntegral a - 0x1000) -- vram mirror 2
+        | a >= 0x1800 && a <= 0x1fff -> pure $ wram (fromIntegral a - 0x1800) -- vram mirror 3
 
         | a >= 0x2000 && a <= 0x2007 -> PPU.registers ppuState a
 
