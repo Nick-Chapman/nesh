@@ -44,8 +44,11 @@ makeCpuBus mapper ppuState controllerState = do
 
         | a >= 0x2000 && a <= 0x2007 -> PPU.registers ppuState a
 
-        -- The next range should be mirrors for the PPU registers. Referenced by ice game.
-        | a >= 0x2008 && a <= 0x3fff -> pure $ dummyRef "CPU[$2008..$3fff]" a
+        -- Mirrors for the PPU registers.
+        | a >= 0x2008 && a <= 0x3fff -> do
+          let a' = a `mod` 8 + 0x2000
+          --log (printf "CPU[$2008..$3fff]: PPU register mirror: %04x --> %04x" a a')
+          cpuBus a'
 
         | a >= 0x4000 && a <= 0x4013 -> pure $ dummyRef_quiet "APU register" a
         | a == 0x4014 -> pure $ PPU.oamDMA ppuState cpuBus
